@@ -35,6 +35,21 @@ except ImportError:
 
 try:
     from openpyxl import Workbook, load_workbook
+    # Patch openpyxl's Integer descriptor to tolerate non-int style IDs in SAP-exported files
+    try:
+        from openpyxl.descriptors.base import Integer as _OxInteger
+        _orig_int_set = _OxInteger.__set__
+        def _tolerant_int_set(self, instance, value):
+            try:
+                _orig_int_set(self, instance, value)
+            except TypeError:
+                try:
+                    instance.__dict__[self.name] = int(float(str(value)))
+                except Exception:
+                    instance.__dict__[self.name] = 0
+        _OxInteger.__set__ = _tolerant_int_set
+    except Exception:
+        pass
 except ImportError:
     print("\nERROR: openpyxl is not installed.")
     print("Fix: open Command Prompt and run:")
