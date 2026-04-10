@@ -1458,7 +1458,7 @@ class ExciseScraperApp:
     # ── Combine Files (mirrors PAD CombineFiles — VBScript + Excel COM) ─────────
 
     def _combine_files(self, root_dir):
-        combined_path = os.path.join(root_dir, "ExciseTax_Combined.xlsm")
+        combined_path = os.path.join(root_dir, "ExciseTax_Combined.xlsx")
         vbs_path = os.path.join(root_dir, "inject_macro.vbs")
 
         decl_folders = [info[2] for info in PANEL_MAP.values()]
@@ -1501,7 +1501,7 @@ If IsNull(destWB) Or IsEmpty(destWB) Then
         Set destWB = xlApp.Workbooks.Open(destPath, False, False)
     Else
         Set destWB = xlApp.Workbooks.Add()
-        destWB.SaveAs destPath, 52
+        destWB.SaveAs destPath, 51
     End If
 End If
 
