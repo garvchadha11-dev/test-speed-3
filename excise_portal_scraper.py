@@ -699,6 +699,14 @@ class ExciseScraperApp:
                          font=("Helvetica Neue", 10))
             om.pack(side="left", padx=2)
 
+        # ── Date range validation error label ──
+        self.date_error_label = tk.Label(card, text="", fg="#FF6B6B", bg=BG_CARD,
+                                          font=("Helvetica Neue", 9, "italic"))
+        # Attach validation traces
+        for v in [self.range_start_month, self.range_start_year,
+                  self.range_end_month, self.range_end_year]:
+            v.trace_add("write", lambda *_: self.root.after(0, self._validate_date_range))
+
         # ── Declaration Types — checkbox list ──
         decl_header = tk.Frame(card, bg=BG_CARD)
         decl_header.pack(fill="x", padx=20, pady=(8, 2))
@@ -813,7 +821,16 @@ class ExciseScraperApp:
         # ── Status ──
         self.status_var = tk.StringVar(value="Ready — configure settings and open browser")
         tk.Label(self.root, textvariable=self.status_var,
-                 font=("Helvetica Neue", 11), fg=ACCENT, bg=BG).pack(pady=(0, 4))
+                 font=("Helvetica Neue", 11), fg=ACCENT, bg=BG).pack(pady=(0, 2))
+
+        # ── Snail animation strip ──
+        self.snail_canvas = tk.Canvas(self.root, bg=BG, height=28, highlightthickness=0)
+        self.snail_canvas.pack(fill="x", padx=30)
+        self.snail_item = self.snail_canvas.create_text(-30, 14, text="🐌",
+                                                         font=("Helvetica Neue", 18), fill=ACCENT)
+        self.snail_canvas.itemconfigure(self.snail_item, state="hidden")
+        self._snail_x = -30
+        self._snail_animating = False
 
         # ── Log Area ──
         tk.Label(self.root, text="ACTIVITY LOG", font=("Helvetica Neue", 10, "bold"),
@@ -834,6 +851,10 @@ class ExciseScraperApp:
         self.log_text.tag_configure("warning", foreground=WARNING)
         self.log_text.tag_configure("error", foreground=ERROR)
         self.log_text.tag_configure("accent", foreground="#FFB3BA")
+
+        # ── Footer ──
+        tk.Label(self.root, text="Report any errors to Garv — let's fix them soon",
+                 font=("Helvetica Neue", 9), fg=FG_DIM, bg=BG).pack(pady=(4, 8))
 
     # ── UI Helpers ────────────────────────────────────────────────────────────
 
@@ -876,6 +897,46 @@ class ExciseScraperApp:
     def _clear_all_decl(self):
         for var in self.decl_vars.values():
             var.set(False)
+
+    def _validate_date_range(self):
+        MONTHS = ["January","February","March","April","May","June",
+                  "July","August","September","October","November","December"]
+        try:
+            si = MONTHS.index(self.range_start_month.get())
+            sy = int(self.range_start_year.get())
+            ei = MONTHS.index(self.range_end_month.get())
+            ey = int(self.range_end_year.get())
+        except (ValueError, Exception):
+            return
+        if (sy > ey) or (sy == ey and si > ei):
+            self.date_error_label.configure(text="  From date can't be after To date")
+            self.date_error_label.pack(fill="x", padx=20, pady=(0, 4))
+            self.start_btn.configure(state="disabled")
+        else:
+            self.date_error_label.configure(text="")
+            self.date_error_label.pack_forget()
+            if self.pw_page and not self.is_running:
+                self.start_btn.configure(state="normal")
+
+    def _start_snail(self):
+        self._snail_x = -30
+        self._snail_animating = True
+        self.snail_canvas.itemconfigure(self.snail_item, state="normal")
+        self._animate_snail()
+
+    def _stop_snail(self):
+        self._snail_animating = False
+        self.snail_canvas.itemconfigure(self.snail_item, state="hidden")
+
+    def _animate_snail(self):
+        if not self._snail_animating:
+            return
+        w = self.snail_canvas.winfo_width() or 680
+        self._snail_x += 2
+        if self._snail_x > w + 30:
+            self._snail_x = -30
+        self.snail_canvas.coords(self.snail_item, self._snail_x, 14)
+        self.root.after(40, self._animate_snail)
 
     def _get_selected_decls(self):
         return [key for key, var in self.decl_vars.items() if var.get()]
@@ -992,16 +1053,19 @@ class ExciseScraperApp:
         self.stop_btn.configure(state="normal")
         self.open_btn.configure(state="disabled")
         self.status_var.set("Scraping in progress...")
+        self._start_snail()
         self._pw_queue.put(self._scrape_main)
 
     def _stop_scrape(self):
         self.stop_requested = True
+        self._stop_snail()
         self.stop_btn.configure(state="disabled", text="Stopping...")
         self._log("Stop requested — finishing current row...", "warning")
 
     def _scrape_done(self, downloaded, skipped, total):
         self.is_running = False
         self.stop_requested = False
+        self._stop_snail()
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled", text="Stop")
         self.status_var.set(f"Done! {downloaded} downloaded, {skipped} skipped out of {total}")
