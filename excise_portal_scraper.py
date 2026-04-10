@@ -1255,6 +1255,8 @@ class ExciseScraperApp:
         page_row_index = 0
         downloaded = 0
         skipped = 0
+        expected_files = set()
+        safe_to_txn = {}
 
         while row_index < total_rows:
             if self.stop_requested:
@@ -1297,6 +1299,8 @@ class ExciseScraperApp:
             safe = txn.replace("/", "-").replace("\\", "-").replace(":", "-").strip()
             os.makedirs(dest_folder, exist_ok=True)
             dest = os.path.join(dest_folder, f"{safe}.xlsx")
+            expected_files.add(f"{safe}.xlsx")
+            safe_to_txn[f"{safe}.xlsx"] = txn
 
             new_file = None
             export_ok = False
@@ -1360,6 +1364,95 @@ class ExciseScraperApp:
             self.root.after(0, lambda d=_d, s=_s: self._update_stats(downloaded=d, skipped=s))
 
         self.root.after(0, lambda d=downloaded: self._log(f"Section done: {d} downloaded", "success"))
+
+        # ── Verify + auto-retry any missing files ──
+        if expected_files:
+            actual_files = {f for f in os.listdir(dest_folder) if f.endswith(".xlsx")} if os.path.isdir(dest_folder) else set()
+            missing = expected_files - actual_files
+
+            if missing:
+                self.root.after(0, lambda m=len(missing): self._log(
+                    f"{m} file(s) missing — retrying...", "warning"))
+
+                ri = 0
+                pri = 0
+                while ri < total_rows and missing and not self.stop_requested:
+                    if pri >= page_size and total_rows > 1000:
+                        nr = page.evaluate(JS_CLICK_NEXT)
+                        if nr in ("NEXT_NOT_FOUND", "NEXT_DISABLED"):
+                            break
+                        self._sleep(0.5)
+                        pri = 0
+                        page.evaluate(JS_FIND_TABLE)
+
+                    page.evaluate(js_scroll_to_row(pri))
+                    txn_r = page.evaluate(js_extract_txn(pri))
+                    if txn_r in ("END", "TABLE_NOT_FOUND", "TABLE_NOT_VISIBLE", "COLUMN_NOT_FOUND", "EMPTY"):
+                        ri += 1
+                        pri += 1
+                        continue
+
+                    safe_r = txn_r.replace("/", "-").replace("\\", "-").replace(":", "-").strip()
+                    fname_r = f"{safe_r}.xlsx"
+
+                    if fname_r not in missing:
+                        ri += 1
+                        pri += 1
+                        continue
+
+                    self.root.after(0, lambda tn=txn_r: self._log(f"Retrying: {tn}", "accent"))
+                    page.evaluate(JS_CLEAR_POPUPS)
+                    more_r = page.evaluate(js_click_more(pri))
+                    if more_r == "MORE_NOT_FOUND":
+                        ri += 1
+                        pri += 1
+                        continue
+                    self._sleep(0.3)
+
+                    dest_r = os.path.join(dest_folder, fname_r)
+                    retry_ok = False
+                    try:
+                        with page.expect_download(timeout=30000) as dl_info:
+                            clicked = False
+                            try:
+                                btn = page.locator("bdi:text('Export to Excel')").first
+                                if btn.is_visible(timeout=500):
+                                    btn.click(timeout=1000)
+                                    clicked = True
+                            except Exception:
+                                pass
+                            if not clicked:
+                                page.evaluate(JS_CLICK_EXPORT)
+                        dl_r = dl_info.value
+                        if not os.path.exists(dest_r):
+                            dl_r.save_as(dest_r)
+                        else:
+                            dl_r.save_as(dest_r + ".tmp")
+                            os.remove(dest_r + ".tmp")
+                        retry_ok = True
+                    except Exception as e:
+                        self.root.after(0, lambda err=str(e): self._log(f"Retry failed: {err}", "error"))
+
+                    if retry_ok:
+                        missing.discard(fname_r)
+                        downloaded += 1
+                        self.root.after(0, lambda tn=txn_r: self._log(f"✓ Retry OK: {tn}", "success"))
+
+                    ri += 1
+                    pri += 1
+
+            actual_files = {f for f in os.listdir(dest_folder) if f.endswith(".xlsx")} if os.path.isdir(dest_folder) else set()
+            still_missing = expected_files - actual_files
+            if still_missing:
+                self.root.after(0, lambda m=len(still_missing), t=len(expected_files): self._log(
+                    f"STILL MISSING {m}/{t} after retry — manual check needed", "error"))
+                for mf in sorted(still_missing):
+                    self.root.after(0, lambda f=mf, st=safe_to_txn: self._log(
+                        f"  FAILED: {st.get(f, f)}", "error"))
+            else:
+                self.root.after(0, lambda t=len(expected_files): self._log(
+                    f"Verified: all {t} files present", "success"))
+
         return downloaded, skipped, total_rows
 
     # ── Combine Files (mirrors PAD CombineFiles — VBScript + Excel COM) ─────────
