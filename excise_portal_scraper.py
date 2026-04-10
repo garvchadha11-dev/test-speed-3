@@ -1568,7 +1568,7 @@ class ExciseScraperApp:
                 fname = os.path.basename(fpath)
                 fn_clean = os.path.splitext(fname)[0]
                 try:
-                    wb_src = load_workbook(fpath, read_only=True, data_only=True)
+                    wb_src = load_workbook(fpath, data_only=True)
                 except Exception as e:
                     self.root.after(0, lambda p=fname, err=str(e): self._log(f"Skipping {p}: {err}", "warning"))
                     continue
