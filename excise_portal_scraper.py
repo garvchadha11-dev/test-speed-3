@@ -35,19 +35,21 @@ except ImportError:
 
 try:
     from openpyxl import Workbook, load_workbook
-    # Patch openpyxl's Integer descriptor to tolerate non-int style IDs in SAP-exported files
+    # Patch openpyxl's _convert to tolerate unconvertible style IDs in SAP-exported xlsx files
     try:
-        from openpyxl.descriptors.base import Integer as _OxInteger
-        _orig_int_set = _OxInteger.__set__
-        def _tolerant_int_set(self, instance, value):
+        import openpyxl.descriptors.base as _oxdb
+        _orig_convert = _oxdb._convert
+        def _tolerant_convert(expected_type, value):
             try:
-                _orig_int_set(self, instance, value)
+                return _orig_convert(expected_type, value)
             except TypeError:
-                try:
-                    instance.__dict__[self.name] = int(float(str(value)))
-                except Exception:
-                    instance.__dict__[self.name] = 0
-        _OxInteger.__set__ = _tolerant_int_set
+                if expected_type is int:
+                    try:
+                        return int(float(str(value)))
+                    except (ValueError, TypeError):
+                        return 0
+                raise
+        _oxdb._convert = _tolerant_convert
     except Exception:
         pass
 except ImportError:
@@ -1582,6 +1584,7 @@ class ExciseScraperApp:
             for fpath in xlsx_files:
                 fname = os.path.basename(fpath)
                 fn_clean = os.path.splitext(fname)[0]
+                month_label = os.path.basename(os.path.dirname(fpath)).title()
                 try:
                     wb_src = load_workbook(fpath, data_only=True)
                 except Exception as e:
@@ -1597,14 +1600,14 @@ class ExciseScraperApp:
                     data_rows = rows[1:]
 
                     if not header_written:
-                        header = ["DeclarationType", "FileName", "SheetName"] + src_headers
+                        header = ["DeclarationType", "Month", "FileName", "SheetName"] + src_headers
                         ws_out.append(header)
                         next_row = 2
                         header_written = True
 
                     for row in data_rows:
                         cleaned = [_clean_value(v) for v in row]
-                        ws_out.append([folder_name, fn_clean, sheet] + cleaned)
+                        ws_out.append([folder_name, month_label, fn_clean, sheet] + cleaned)
                         next_row += 1
                         total_rows_written += 1
 
