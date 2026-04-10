@@ -1519,169 +1519,112 @@ class ExciseScraperApp:
 
         return downloaded, skipped, total_rows
 
-    # ── Combine Files (mirrors PAD CombineFiles — VBScript + Excel COM) ─────────
+    # ── Combine Files (pure Python + openpyxl — no Excel/VBScript needed) ───────
 
     def _combine_files(self, root_dir):
+        from openpyxl import Workbook, load_workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+
         combined_path = os.path.join(root_dir, "ExciseTax_Combined.xlsx")
-        vbs_path = os.path.join(root_dir, "inject_macro.vbs")
+        self.root.after(0, lambda: self._log("Combining files...", "accent"))
 
-        decl_folders = [info[2] for info in PANEL_MAP.values()]
-        decl_folders_vbs = ",".join(f'"{d}"' for d in decl_folders)
-        root_dir_vbs = root_dir.replace("\\", "\\\\")
+        def _clean_value(val):
+            """Convert numeric strings to numbers, preserve leading-zero strings."""
+            if not isinstance(val, str):
+                return val
+            if any(c.isalpha() for c in val):
+                return val
+            cleaned = "".join(c for c in val if c.isdigit() or c in ".,-")
+            cleaned = cleaned.replace(",", "")
+            if not cleaned:
+                return val
+            try:
+                if val.lstrip().startswith("0") and len(val.strip()) > 1 and "." not in val:
+                    return val  # preserve leading-zero strings (e.g. account numbers)
+                return float(cleaned) if "." in cleaned else int(cleaned)
+            except ValueError:
+                return val
 
-        vbs = f"""Dim xlApp, destWB, destWS, fso
-Dim NextRow, HeadersWritten
-Dim LastRow, LastCol
-Dim r, c, j, i, col2
-Dim arr, s, cleaned, ch
-Dim RootFolder, DeclFolders
-Dim DeclName, SubPath
-Dim folder, file, hasFiles
-Dim srcWB, ws, fnClean
+        wb_out = Workbook()
+        ws_out = wb_out.active
+        ws_out.title = "CombinedData"
 
-Set fso = CreateObject("Scripting.FileSystemObject")
+        header_written = False
+        next_row = 1
+        total_rows_written = 0
 
-' Connect to running Excel or start a new instance
-On Error Resume Next
-Set xlApp = GetObject(, "Excel.Application")
-On Error GoTo 0
-If IsNull(xlApp) Or IsEmpty(xlApp) Then
-    Set xlApp = CreateObject("Excel.Application")
-    xlApp.Visible = True
-End If
+        for decl_key, (_, _, folder_name) in PANEL_MAP.items():
+            decl_dir = os.path.join(root_dir, folder_name)
+            if not os.path.isdir(decl_dir):
+                continue
+            xlsx_files = sorted(
+                f for f in os.listdir(decl_dir)
+                if f.endswith(".xlsx") and not f.startswith("~$")
+            )
+            for fname in xlsx_files:
+                fpath = os.path.join(decl_dir, fname)
+                fn_clean = fname.replace(".xlsx", "")
+                try:
+                    wb_src = load_workbook(fpath, read_only=True, data_only=True)
+                except Exception as e:
+                    self.root.after(0, lambda p=fname, err=str(e): self._log(f"Skipping {p}: {err}", "warning"))
+                    continue
 
-xlApp.DisplayAlerts = False
-xlApp.ScreenUpdating = False
+                for sheet in wb_src.sheetnames:
+                    ws_src = wb_src[sheet]
+                    rows = list(ws_src.iter_rows(values_only=True))
+                    if not rows:
+                        continue
+                    src_headers = list(rows[0])
+                    data_rows = rows[1:]
 
-RootFolder = "{root_dir_vbs}\\\\"
+                    if not header_written:
+                        header = ["DeclarationType", "FileName", "SheetName"] + src_headers
+                        ws_out.append(header)
+                        next_row = 2
+                        header_written = True
 
-' Open or create the combined workbook
-Dim destPath : destPath = "{combined_path.replace(chr(92), chr(92)+chr(92))}"
-On Error Resume Next
-Set destWB = xlApp.Workbooks(fso.GetFileName(destPath))
-On Error GoTo 0
-If IsNull(destWB) Or IsEmpty(destWB) Then
-    If fso.FileExists(destPath) Then
-        Set destWB = xlApp.Workbooks.Open(destPath, False, False)
-    Else
-        Set destWB = xlApp.Workbooks.Add()
-        destWB.SaveAs destPath, 51
-    End If
-End If
+                    for row in data_rows:
+                        cleaned = [_clean_value(v) for v in row]
+                        ws_out.append([folder_name, fn_clean, sheet] + cleaned)
+                        next_row += 1
+                        total_rows_written += 1
 
-On Error Resume Next
-Set destWS = destWB.Worksheets("CombinedData")
-If destWS Is Nothing Then
-    Set destWS = destWB.Worksheets.Add
-    destWS.Name = "CombinedData"
-Else
-    destWS.Cells.Clear
-End If
-On Error GoTo 0
+                wb_src.close()
 
-DeclFolders = Array({decl_folders_vbs})
+        if not header_written:
+            self.root.after(0, lambda: self._log("No files to combine", "warning"))
+            return
 
-NextRow = 1
-HeadersWritten = False
+        # ── Formatting ──
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill("solid", fgColor="8B1A2B")
+        header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-For i = 0 To UBound(DeclFolders)
-    DeclName = DeclFolders(i)
-    SubPath = RootFolder & DeclName & "\\\\"
-    If fso.FolderExists(SubPath) Then
-        Set folder = fso.GetFolder(SubPath)
-        hasFiles = False
-        For Each file In folder.Files
-            If LCase(fso.GetExtensionName(file.Name)) = "xlsx" And Left(file.Name, 2) <> "~$" Then hasFiles = True : Exit For
-        Next
-        If hasFiles Then
-            For Each file In folder.Files
-                If LCase(fso.GetExtensionName(file.Name)) = "xlsx" And Left(file.Name, 2) <> "~$" Then
-                    Set srcWB = xlApp.Workbooks.Open(file.Path, False, True)
-                    For Each ws In srcWB.Worksheets
-                        LastRow = ws.Cells(ws.Rows.Count, 1).End(-4162).Row
-                        LastCol = ws.Cells(1, ws.Columns.Count).End(-4159).Column
-                        If Not HeadersWritten Then
-                            destWS.Cells(1,1).Value = "DeclarationType"
-                            destWS.Cells(1,2).Value = "FileName"
-                            destWS.Cells(1,3).Value = "SheetName"
-                            For col2 = 1 To LastCol
-                                destWS.Cells(1, col2+3).Value = ws.Cells(1, col2).Value
-                            Next
-                            NextRow = 2
-                            HeadersWritten = True
-                        End If
-                        If LastRow >= 2 Then
-                            arr = ws.Range(ws.Cells(2,1), ws.Cells(LastRow, LastCol)).Value
-                            For r = 1 To UBound(arr,1)
-                                For c = 1 To UBound(arr,2)
-                                    If VarType(arr(r,c)) = 8 Then
-                                        s = CStr(arr(r,c))
-                                        If Not HasLetter(s) Then
-                                            cleaned = ""
-                                            For j = 1 To Len(s)
-                                                ch = Mid(s,j,1)
-                                                If (ch>="0" And ch<="9") Or ch="." Or ch="-" Then cleaned=cleaned&ch
-                                            Next
-                                            If Len(cleaned)>0 And IsNumeric(cleaned) Then
-                                                If Left(s,1)="0" And Len(s)>1 Then arr(r,c)=cleaned Else arr(r,c)=CDbl(cleaned)
-                                            End If
-                                        End If
-                                    End If
-                                Next
-                            Next
-                            destWS.Range(destWS.Cells(NextRow,4), destWS.Cells(NextRow+UBound(arr,1)-1, 3+UBound(arr,2))).Value = arr
-                            fnClean = Replace(file.Name, ".xlsx", "")
-                            For r = NextRow To NextRow+UBound(arr,1)-1
-                                destWS.Cells(r,1).Value = DeclName
-                                destWS.Cells(r,2).Value = fnClean
-                                destWS.Cells(r,3).Value = ws.Name
-                            Next
-                            NextRow = NextRow + UBound(arr,1)
-                        End If
-                    Next
-                    srcWB.Close False
-                End If
-            Next
-        End If
-    End If
-Next
+        for cell in ws_out[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
 
-If HeadersWritten Then
-    destWS.Rows(1).Font.Bold = True
-    destWS.UsedRange.Columns.AutoFit
-End If
+        ws_out.freeze_panes = "A2"
 
-destWB.Save
-xlApp.DisplayAlerts = True
-xlApp.ScreenUpdating = True
-Set destWS = Nothing
-Set destWB = Nothing
-Set fso = Nothing
+        # Auto-width based on content
+        col_widths = {}
+        for row in ws_out.iter_rows():
+            for cell in row:
+                if cell.value is not None:
+                    col = cell.column
+                    col_widths[col] = max(col_widths.get(col, 0), min(len(str(cell.value)), 40))
+        for col, width in col_widths.items():
+            ws_out.column_dimensions[get_column_letter(col)].width = width + 2
 
-Function HasLetter(txt)
-    Dim k, ch2
-    HasLetter = False
-    For k = 1 To Len(txt)
-        ch2 = Mid(txt,k,1)
-        If (ch2>="A" And ch2<="Z") Or (ch2>="a" And ch2<="z") Then HasLetter=True : Exit Function
-    Next
-End Function
-"""
-        # Write VBS
-        with open(vbs_path, "w", encoding="utf-8") as f:
-            f.write(vbs)
-
-        # Run VBScript — fully self-contained, no win32com needed from Python
-        self.root.after(0, lambda: self._log("Running combine macro...", "accent"))
-        result = subprocess.run(
-            ["cscript", "//nologo", vbs_path],
-            capture_output=True, text=True
-        )
-
-        if result.returncode == 0:
-            self.root.after(0, lambda p=combined_path: self._log(f"Combined: {p}", "success"))
-        else:
-            self.root.after(0, lambda e=result.stderr: self._log(f"Combine error: {e}", "error"))
+        try:
+            wb_out.save(combined_path)
+            self.root.after(0, lambda p=combined_path, n=total_rows_written: self._log(
+                f"Combined {n} rows → {p}", "success"))
+        except Exception as e:
+            self.root.after(0, lambda err=str(e): self._log(f"Save failed: {err}", "error"))
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
