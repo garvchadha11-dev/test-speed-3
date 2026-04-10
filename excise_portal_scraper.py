@@ -1476,18 +1476,33 @@ Dim folder, file, hasFiles
 Dim srcWB, ws, fnClean
 
 Set fso = CreateObject("Scripting.FileSystemObject")
+
+' Connect to running Excel or start a new instance
+On Error Resume Next
 Set xlApp = GetObject(, "Excel.Application")
+On Error GoTo 0
+If IsNull(xlApp) Or IsEmpty(xlApp) Then
+    Set xlApp = CreateObject("Excel.Application")
+    xlApp.Visible = True
+End If
+
 xlApp.DisplayAlerts = False
 xlApp.ScreenUpdating = False
 
 RootFolder = "{root_dir_vbs}\\\\"
 
+' Open or create the combined workbook
 Dim destPath : destPath = "{combined_path.replace(chr(92), chr(92)+chr(92))}"
 On Error Resume Next
 Set destWB = xlApp.Workbooks(fso.GetFileName(destPath))
 On Error GoTo 0
-If destWB Is Nothing Then
-    Set destWB = xlApp.Workbooks.Open(destPath, False, False)
+If IsNull(destWB) Or IsEmpty(destWB) Then
+    If fso.FileExists(destPath) Then
+        Set destWB = xlApp.Workbooks.Open(destPath, False, False)
+    Else
+        Set destWB = xlApp.Workbooks.Add()
+        destWB.SaveAs destPath, 52
+    End If
 End If
 
 On Error Resume Next
@@ -1592,30 +1607,8 @@ End Function
         with open(vbs_path, "w", encoding="utf-8") as f:
             f.write(vbs)
 
-        # Open Excel and save as xlsm first
-        try:
-            import win32com.client
-            xl = win32com.client.GetActiveObject("Excel.Application")
-        except Exception:
-            xl = None
-
-        if xl is None:
-            try:
-                import win32com.client
-                xl = win32com.client.Dispatch("Excel.Application")
-                xl.Visible = True
-            except Exception:
-                self.root.after(0, lambda: self._log("Excel not available — skipping combine", "warning"))
-                return
-
-        try:
-            wb = xl.Workbooks.Add()
-            wb.SaveAs(combined_path, 52)  # 52 = xlsm — keep open so VBScript can find it
-        except Exception:
-            self.root.after(0, lambda: self._log("Could not create combined workbook", "error"))
-            return
-
-        # Run VBScript (workbook is still open — VBScript accesses it via GetObject)
+        # Run VBScript — fully self-contained, no win32com needed from Python
+        self.root.after(0, lambda: self._log("Running combine macro...", "accent"))
         result = subprocess.run(
             ["cscript", "//nologo", vbs_path],
             capture_output=True, text=True
@@ -1625,11 +1618,6 @@ End Function
             self.root.after(0, lambda p=combined_path: self._log(f"Combined: {p}", "success"))
         else:
             self.root.after(0, lambda e=result.stderr: self._log(f"Combine error: {e}", "error"))
-            # Fallback: close the workbook so Excel doesn't stay dangling
-            try:
-                wb.Close(False)
-            except Exception:
-                pass
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
