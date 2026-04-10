@@ -1558,13 +1558,15 @@ class ExciseScraperApp:
             decl_dir = os.path.join(root_dir, folder_name)
             if not os.path.isdir(decl_dir):
                 continue
-            xlsx_files = sorted(
-                f for f in os.listdir(decl_dir)
-                if f.endswith(".xlsx") and not f.startswith("~$")
-            )
-            for fname in xlsx_files:
-                fpath = os.path.join(decl_dir, fname)
-                fn_clean = fname.replace(".xlsx", "")
+            # Walk all subfolders (month subfolders like "january 2025")
+            xlsx_files = []
+            for dirpath, _, filenames in os.walk(decl_dir):
+                for f in sorted(filenames):
+                    if f.endswith(".xlsx") and not f.startswith("~$"):
+                        xlsx_files.append(os.path.join(dirpath, f))
+            for fpath in xlsx_files:
+                fname = os.path.basename(fpath)
+                fn_clean = os.path.splitext(fname)[0]
                 try:
                     wb_src = load_workbook(fpath, read_only=True, data_only=True)
                 except Exception as e:
