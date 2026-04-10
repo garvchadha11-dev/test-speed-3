@@ -1541,7 +1541,7 @@ class ExciseScraperApp:
                 return val
             try:
                 if val.lstrip().startswith("0") and len(val.strip()) > 1 and "." not in val:
-                    return val  # preserve leading-zero strings (e.g. account numbers)
+                    return cleaned  # preserve as string but strip non-numeric chars (matches VBA)
                 return float(cleaned) if "." in cleaned else int(cleaned)
             except ValueError:
                 return val
@@ -1625,6 +1625,8 @@ class ExciseScraperApp:
             wb_out.save(combined_path)
             self.root.after(0, lambda p=combined_path, n=total_rows_written: self._log(
                 f"Combined {n} rows → {p}", "success"))
+            self.root.after(0, lambda p=combined_path: tk.messagebox.showinfo(
+                "Complete", f"All files combined into:\n{p}"))
         except Exception as e:
             self.root.after(0, lambda err=str(e): self._log(f"Save failed: {err}", "error"))
 
