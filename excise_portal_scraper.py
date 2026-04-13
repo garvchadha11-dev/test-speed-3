@@ -1004,9 +1004,9 @@ class ExciseScraperApp:
     # ── Browser ───────────────────────────────────────────────────────────────
 
     def _open_browser(self):
-        self.open_btn.configure(state="disabled", text="Opening...")
-        self._log("Launching browser...", "accent")
-        self.status_var.set("Opening browser — please log in to the FTA portal")
+        self.open_btn.configure(state="disabled", text="Connecting...")
+        self._log("Checking for existing browser session...", "accent")
+        self.status_var.set("Connecting to browser...")
         self._pw_queue.put(self._launch_browser)
 
     def _launch_browser(self):
@@ -1015,7 +1015,24 @@ class ExciseScraperApp:
             dl = self.folder_var.get()
             os.makedirs(dl, exist_ok=True)
 
-            # Launch Microsoft Edge with remote debugging
+            # ── Step 1: Try to reuse an already-running Edge on port 9222 ──
+            try:
+                self.pw_browser = self.pw_instance.chromium.connect_over_cdp(
+                    "http://localhost:9222", timeout=2000
+                )
+                contexts = self.pw_browser.contexts
+                if contexts:
+                    pages = contexts[0].pages
+                    self.pw_page = pages[0] if pages else contexts[0].new_page()
+                else:
+                    context = self.pw_browser.new_context(accept_downloads=True)
+                    self.pw_page = context.new_page()
+                self.root.after(0, lambda: self._browser_ready(reconnected=True))
+                return
+            except Exception:
+                pass  # no existing browser — launch a fresh one
+
+            # ── Step 2: Launch Edge with a persistent profile so login is remembered ──
             edge_paths = [
                 r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
                 r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -1026,9 +1043,13 @@ class ExciseScraperApp:
                     edge_bin = p
                     break
 
+            # Persistent profile dir — Edge saves cookies/session here across runs
+            user_data = os.path.join(
+                os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+                "ExciseScraper", "EdgeProfile"
+            )
+
             if edge_bin:
-                # Start Edge with debugging port
-                user_data = os.path.join(os.environ.get("LOCALAPPDATA", ""), "ExciseScraper", "EdgeProfile")
                 self._chrome_proc = subprocess.Popen([
                     edge_bin,
                     "--remote-debugging-port=9222",
@@ -1037,7 +1058,6 @@ class ExciseScraperApp:
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 time.sleep(3)
 
-                # Connect Playwright to Edge
                 self.pw_browser = self.pw_instance.chromium.connect_over_cdp("http://localhost:9222")
                 contexts = self.pw_browser.contexts
                 if contexts:
@@ -1058,14 +1078,18 @@ class ExciseScraperApp:
                 self.pw_page.goto("https://eservices.tax.gov.ae/#/Logon",
                                   timeout=300000, wait_until="domcontentloaded")
 
-            self.root.after(0, self._browser_ready)
+            self.root.after(0, lambda: self._browser_ready(reconnected=False))
         except Exception as e:
             self.root.after(0, lambda: self._browser_error(str(e)))
 
-    def _browser_ready(self):
+    def _browser_ready(self, reconnected=False):
         self.open_btn.configure(text="Browser Open", bg="#D4EDDA", fg="#2D6A2D")
-        self._log("Browser opened — log in, then click Start Scraping", "success")
-        self.status_var.set("Log in to the portal, then click 'Start Scraping'")
+        if reconnected:
+            self._log("Reconnected to existing browser session — ready to scrape", "success")
+            self.status_var.set("Reconnected to existing session — click 'Start Scraping'")
+        else:
+            self._log("Browser opened — log in, then click Start Scraping", "success")
+            self.status_var.set("Log in to the portal, then click 'Start Scraping'")
         self._validate_date_range()  # only enable Start if date range is currently valid
 
     def _browser_error(self, msg):
