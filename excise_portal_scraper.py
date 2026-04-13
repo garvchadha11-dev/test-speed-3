@@ -1171,6 +1171,12 @@ class ExciseScraperApp:
                 grand_skipped += sk
                 grand_total += tot
 
+                # ── 4b. Wait for page to settle before next month ──
+                is_last_term = (term_idx == len(search_terms) - 1)
+                if not is_last_term:
+                    self.root.after(0, lambda: self._log("Waiting for page to settle before next month...", "info"))
+                    self._sleep(3)
+
                 # ── 5. Navigate back only when switching declarations ──
                 is_last_term = (term_idx == len(search_terms) - 1)
                 is_last_decl = (decl_idx == len(selected_decls) - 1)
@@ -1209,7 +1215,7 @@ class ExciseScraperApp:
 
     def _apply_filters(self, page, search_term):
         search_term = search_term.lower()
-        self._sleep(1)
+        self._sleep(2)
 
         # ── Search (retry up to 3x like PAD) ──
         search_ok = False
