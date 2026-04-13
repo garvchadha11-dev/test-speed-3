@@ -206,17 +206,16 @@ def js_verify_search(search_term):
 
 JS_SET_STATUS_APPROVED = """
 () => {
-    var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
+    var arrows = document.querySelectorAll('span[id$="_combobox-arrow"], span[id$="-arrow"]');
     var arrow = null;
     for (var i = 0; i < arrows.length; i++) {
-        var id = arrows[i].id;
-        if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) && arrows[i].getBoundingClientRect().width > 0) {
+        if (arrows[i].id.toLowerCase().indexOf('status') > -1 && arrows[i].getBoundingClientRect().width > 0) {
             arrow = arrows[i];
             break;
         }
     }
     if (!arrow) return 'ARROW_NOT_FOUND';
-    var comboId = arrow.id.replace('-arrow', '');
+    var comboId = arrow.id.replace(/-arrow$/, '').replace(/_arrow$/, '');
     var combo = sap.ui.getCore().byId(comboId);
     if (!combo) return 'COMBO_NOT_FOUND';
     var items = combo.getItems();
@@ -239,17 +238,16 @@ JS_SET_STATUS_APPROVED = """
 
 JS_SET_STATUS_WAREHOUSE = """
 () => {
-    var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
+    var arrows = document.querySelectorAll('span[id$="_combobox-arrow"], span[id$="-arrow"]');
     var arrow = null;
     for (var i = 0; i < arrows.length; i++) {
-        var id = arrows[i].id;
-        if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) && arrows[i].getBoundingClientRect().width > 0) {
+        if (arrows[i].id.toLowerCase().indexOf('status') > -1 && arrows[i].getBoundingClientRect().width > 0) {
             arrow = arrows[i];
             break;
         }
     }
     if (!arrow) return 'FAIL';
-    var comboId = arrow.id.replace('-arrow', '');
+    var comboId = arrow.id.replace(/-arrow$/, '').replace(/_arrow$/, '');
     var combo = sap.ui.getCore().byId(comboId);
     if (!combo) return 'FAIL';
     var items = combo.getItems();
