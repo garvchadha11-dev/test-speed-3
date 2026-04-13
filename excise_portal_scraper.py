@@ -721,6 +721,9 @@ class ExciseScraperApp:
                          activeforeground=FG, highlightthickness=0, relief="flat",
                          font=("Helvetica Neue", 10))
             om.pack(side="left", padx=2)
+        tk.Button(self.range_frame, text="Last Month", command=self._set_last_month,
+                  bg=BG_INPUT, fg=ACCENT, relief="flat", padx=8,
+                  font=("Helvetica Neue", 10), cursor="hand2").pack(side="left", padx=(10, 0))
 
         # ── Date range validation error label ──
         self.date_error_label = tk.Label(card, text="", fg="#FF6B6B", bg=BG_CARD,
@@ -907,6 +910,20 @@ class ExciseScraperApp:
             self.stat_progress.configure(text=f"{progress}%")
             self.progress_var.set(progress)
 
+
+    def _set_last_month(self):
+        import datetime
+        MONTHS = ["January","February","March","April","May","June",
+                  "July","August","September","October","November","December"]
+        today = datetime.date.today()
+        first_of_this_month = today.replace(day=1)
+        last_month = first_of_this_month - datetime.timedelta(days=1)
+        m = MONTHS[last_month.month - 1]
+        y = str(last_month.year)
+        self.range_start_month.set(m)
+        self.range_start_year.set(y)
+        self.range_end_month.set(m)
+        self.range_end_year.set(y)
 
     def _browse_folder(self):
         folder = filedialog.askdirectory(initialdir=self.folder_var.get())
