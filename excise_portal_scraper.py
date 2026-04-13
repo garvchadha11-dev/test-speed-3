@@ -652,9 +652,22 @@ class ExciseScraperApp:
             try:
                 fn()
             except Exception as e:
-                self.root.after(0, lambda err=str(e): self._log(f"Worker error: {err}", "error"))
+                err = str(e)
+                self.root.after(0, lambda err=err: self._log(f"Worker error: {err}", "error"))
+                # Reset running state so the UI doesn't stay locked after a crash
+                self.root.after(0, self._reset_after_crash)
             finally:
                 self._pw_queue.task_done()
+
+    def _reset_after_crash(self):
+        """Restore UI to idle state after an unhandled worker exception."""
+        self.is_running = False
+        self.stop_requested = False
+        self._stop_snail()
+        self.start_btn.configure(state="normal" if self.pw_page else "disabled")
+        self.stop_btn.configure(state="disabled", text="Stop")
+        self.open_btn.configure(state="normal")
+        self.status_var.set("Stopped — an error occurred, check the log")
 
     def _center(self, w, h):
         sw = self.root.winfo_screenwidth()
@@ -699,9 +712,6 @@ class ExciseScraperApp:
         self.range_end_month   = tk.StringVar(value="December")
         self.range_end_year    = tk.StringVar(value="2025")
         for var, opts in [(self.range_start_month, MONTHS),(self.range_start_year, YEARS)]:
-            tk.OptionMenu(self.range_frame, var, *opts).configure(
-                bg=BG_INPUT, fg=FG, activebackground=BG_INPUT, activeforeground=FG,
-                highlightthickness=0, relief="flat", font=("Helvetica Neue", 10))
             om = tk.OptionMenu(self.range_frame, var, *opts)
             om.configure(bg=BG_INPUT, fg=FG, activebackground=BG_INPUT,
                          activeforeground=FG, highlightthickness=0, relief="flat",
@@ -1041,9 +1051,9 @@ class ExciseScraperApp:
 
     def _browser_ready(self):
         self.open_btn.configure(text="Browser Open", bg="#D4EDDA", fg="#2D6A2D")
-        self.start_btn.configure(state="normal")
         self._log("Browser opened — log in, then click Start Scraping", "success")
         self.status_var.set("Log in to the portal, then click 'Start Scraping'")
+        self._validate_date_range()  # only enable Start if date range is currently valid
 
     def _browser_error(self, msg):
         self.open_btn.configure(state="normal", text="1. Open Browser & Login")
