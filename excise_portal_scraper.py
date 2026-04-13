@@ -206,133 +206,68 @@ def js_verify_search(search_term):
 
 JS_SET_STATUS_APPROVED = """
 () => {
-    function setApproved(combo) {
-        var items = combo.getItems();
-        for (var j = 0; j < items.length; j++) {
-            if (items[j].getText().trim().toLowerCase() === 'approved') {
-                combo.setSelectedKey(items[j].getKey());
-                combo.setSelectedItem(items[j]);
-                combo.setValue(items[j].getText().trim());
-                combo.fireSelectionChange({selectedItem: items[j]});
-                combo.fireChange({value: items[j].getText().trim()});
-                return true;
-            }
-        }
-        return false;
-    }
-
-    function isStatusCombo(combo) {
-        // A status combo has text-based options (not numbers) and contains 'approved'
-        if (!combo || !combo.getItems) return false;
-        var items = combo.getItems();
-        if (items.length < 2) return false;
-        var hasApproved = false;
-        for (var j = 0; j < items.length; j++) {
-            var txt = items[j].getText().trim().toLowerCase();
-            if (!txt || !isNaN(txt)) return false;  // skip numeric combos (page size etc.)
-            if (txt === 'approved') hasApproved = true;
-        }
-        return hasApproved;
-    }
-
-    // Pass 1: known ID patterns
-    var STATUS_KEYWORDS = ['status_combobox', 'decstatus_combobox', 'mydecstatus_combobox',
-                           'mydeclstatus_combobox', 'status_-arrow', 'declstatus'];
-    var arrows = document.querySelectorAll('span[id$="-arrow"], span[id$="_arrow"]');
+    var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
+    var arrow = null;
     for (var i = 0; i < arrows.length; i++) {
-        if (arrows[i].getBoundingClientRect().width === 0) continue;
-        var lowerId = arrows[i].id.toLowerCase();
-        var matched = false;
-        for (var k = 0; k < STATUS_KEYWORDS.length; k++) {
-            if (lowerId.indexOf(STATUS_KEYWORDS[k]) > -1) { matched = true; break; }
+        var id = arrows[i].id;
+        if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) && arrows[i].getBoundingClientRect().width > 0) {
+            arrow = arrows[i];
+            break;
         }
-        if (!matched) continue;
-        var comboId = arrows[i].id.replace(/-arrow$/, '').replace(/_arrow$/, '');
-        var combo = null;
-        try { combo = sap.ui.getCore().byId(comboId); } catch(e) {}
-        if (!combo || !combo.getItems) continue;
-        if (setApproved(combo)) return 'APPROVED_SET';
     }
-
-    // Pass 2: fallback — find any visible combo whose items look like statuses
-    var allArrows = document.querySelectorAll('span[id$="-arrow"], span[id$="_arrow"]');
-    for (var i = 0; i < allArrows.length; i++) {
-        if (allArrows[i].getBoundingClientRect().width === 0) continue;
-        var comboId = allArrows[i].id.replace(/-arrow$/, '').replace(/_arrow$/, '');
-        var combo = null;
-        try { combo = sap.ui.getCore().byId(comboId); } catch(e) {}
-        if (!isStatusCombo(combo)) continue;
-        if (setApproved(combo)) return 'APPROVED_SET';
+    if (!arrow) return 'ARROW_NOT_FOUND';
+    var comboId = arrow.id.replace('-arrow', '');
+    var combo = sap.ui.getCore().byId(comboId);
+    if (!combo) return 'COMBO_NOT_FOUND';
+    var items = combo.getItems();
+    var approvedItem = null;
+    for (var j = 0; j < items.length; j++) {
+        if (items[j].getText().trim() === 'Approved') {
+            approvedItem = items[j];
+            break;
+        }
     }
-
-    return 'NO_APPROVED';
+    if (!approvedItem) return 'NO_APPROVED';
+    combo.setSelectedKey(approvedItem.getKey());
+    combo.setSelectedItem(approvedItem);
+    combo.setValue(approvedItem.getText().trim());
+    combo.fireSelectionChange({selectedItem: approvedItem});
+    combo.fireChange({value: approvedItem.getText().trim()});
+    return 'APPROVED_SET';
 }
 """
 
 JS_SET_STATUS_WAREHOUSE = """
 () => {
-    var WH_TEXTS = ['approved by destination warehouse keeper', 'approved by warehouse keeper', 'warehouse keeper'];
-
-    function setWarehouse(combo) {
-        var items = combo.getItems();
-        for (var j = 0; j < items.length; j++) {
-            var txt = items[j].getText().trim().toLowerCase();
-            for (var k = 0; k < WH_TEXTS.length; k++) {
-                if (txt.indexOf(WH_TEXTS[k]) > -1) {
-                    combo.setSelectedKey(items[j].getKey());
-                    combo.setSelectedItem(items[j]);
-                    combo.setValue(items[j].getText().trim());
-                    combo.fireSelectionChange({selectedItem: items[j]});
-                    combo.fireChange({value: items[j].getText().trim()});
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    function isStatusCombo(combo) {
-        if (!combo || !combo.getItems) return false;
-        var items = combo.getItems();
-        if (items.length < 2) return false;
-        for (var j = 0; j < items.length; j++) {
-            var txt = items[j].getText().trim().toLowerCase();
-            if (!txt || !isNaN(txt)) return false;
-        }
-        return true;
-    }
-
-    // Pass 1: known ID patterns
-    var STATUS_KEYWORDS = ['status_combobox', 'decstatus_combobox', 'mydecstatus_combobox',
-                           'mydeclstatus_combobox', 'declstatus'];
-    var arrows = document.querySelectorAll('span[id$="-arrow"], span[id$="_arrow"]');
+    var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
+    var arrow = null;
     for (var i = 0; i < arrows.length; i++) {
-        if (arrows[i].getBoundingClientRect().width === 0) continue;
-        var lowerId = arrows[i].id.toLowerCase();
-        var matched = false;
-        for (var k = 0; k < STATUS_KEYWORDS.length; k++) {
-            if (lowerId.indexOf(STATUS_KEYWORDS[k]) > -1) { matched = true; break; }
+        var id = arrows[i].id;
+        if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) && arrows[i].getBoundingClientRect().width > 0) {
+            arrow = arrows[i];
+            break;
         }
-        if (!matched) continue;
-        var comboId = arrows[i].id.replace(/-arrow$/, '').replace(/_arrow$/, '');
-        var combo = null;
-        try { combo = sap.ui.getCore().byId(comboId); } catch(e) {}
-        if (!combo || !combo.getItems) continue;
-        if (setWarehouse(combo)) return 'WAREHOUSE_SET';
     }
-
-    // Pass 2: fallback — any visible status-like combo with a warehouse option
-    var allArrows = document.querySelectorAll('span[id$="-arrow"], span[id$="_arrow"]');
-    for (var i = 0; i < allArrows.length; i++) {
-        if (allArrows[i].getBoundingClientRect().width === 0) continue;
-        var comboId = allArrows[i].id.replace(/-arrow$/, '').replace(/_arrow$/, '');
-        var combo = null;
-        try { combo = sap.ui.getCore().byId(comboId); } catch(e) {}
-        if (!isStatusCombo(combo)) continue;
-        if (setWarehouse(combo)) return 'WAREHOUSE_SET';
+    if (!arrow) return 'FAIL';
+    var comboId = arrow.id.replace('-arrow', '');
+    var combo = sap.ui.getCore().byId(comboId);
+    if (!combo) return 'FAIL';
+    var items = combo.getItems();
+    var whItem = null;
+    for (var j = 0; j < items.length; j++) {
+        var txt = items[j].getText().trim().toLowerCase();
+        if (txt === 'approved by destination warehouse keeper' || txt === 'approved by warehouse keeper') {
+            whItem = items[j];
+            break;
+        }
     }
-
-    return 'FAIL';
+    if (!whItem) return 'FAIL';
+    combo.setSelectedKey(whItem.getKey());
+    combo.setSelectedItem(whItem);
+    combo.setValue(whItem.getText().trim());
+    combo.fireSelectionChange({selectedItem: whItem});
+    combo.fireChange({value: whItem.getText().trim()});
+    return 'WAREHOUSE_SET';
 }
 """
 
