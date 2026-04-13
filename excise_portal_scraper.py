@@ -210,68 +210,67 @@ def js_verify_search(search_term):
 
 JS_SET_STATUS_APPROVED = """
 () => {
-    var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
-    var arrow = null;
+    // Find every visible SAP combo box and pick the first one that has an 'Approved' option.
+    // This avoids relying on hardcoded ID patterns that break when the portal updates.
+    var arrows = document.querySelectorAll('span[id$="-arrow"]');
     for (var i = 0; i < arrows.length; i++) {
-        var id = arrows[i].id;
-        if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) && arrows[i].getBoundingClientRect().width > 0) {
-            arrow = arrows[i];
-            break;
+        if (arrows[i].getBoundingClientRect().width === 0) continue;
+        var comboId = arrows[i].id.replace(/-arrow$/, '');
+        var combo = null;
+        try { combo = sap.ui.getCore().byId(comboId); } catch(e) {}
+        if (!combo || !combo.getItems) continue;
+        var items = combo.getItems();
+        var approvedItem = null;
+        for (var j = 0; j < items.length; j++) {
+            if (items[j].getText().trim().toLowerCase() === 'approved') {
+                approvedItem = items[j];
+                break;
+            }
         }
+        if (!approvedItem) continue;
+        combo.setSelectedKey(approvedItem.getKey());
+        combo.setSelectedItem(approvedItem);
+        combo.setValue(approvedItem.getText().trim());
+        combo.fireSelectionChange({selectedItem: approvedItem});
+        combo.fireChange({value: approvedItem.getText().trim()});
+        return 'APPROVED_SET';
     }
-    if (!arrow) return 'ARROW_NOT_FOUND';
-    var comboId = arrow.id.replace('-arrow', '');
-    var combo = sap.ui.getCore().byId(comboId);
-    if (!combo) return 'COMBO_NOT_FOUND';
-    var items = combo.getItems();
-    var approvedItem = null;
-    for (var j = 0; j < items.length; j++) {
-        if (items[j].getText().trim() === 'Approved') {
-            approvedItem = items[j];
-            break;
-        }
-    }
-    if (!approvedItem) return 'NO_APPROVED';
-    combo.setSelectedKey(approvedItem.getKey());
-    combo.setSelectedItem(approvedItem);
-    combo.setValue(approvedItem.getText().trim());
-    combo.fireSelectionChange({selectedItem: approvedItem});
-    combo.fireChange({value: approvedItem.getText().trim()});
-    return 'APPROVED_SET';
+    return 'NO_APPROVED';
 }
 """
 
 JS_SET_STATUS_WAREHOUSE = """
 () => {
-    var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
-    var arrow = null;
+    // Same resilient approach — scan all visible combo boxes for a warehouse keeper option.
+    var WH_TEXTS = ['approved by destination warehouse keeper', 'approved by warehouse keeper', 'warehouse keeper'];
+    var arrows = document.querySelectorAll('span[id$="-arrow"]');
     for (var i = 0; i < arrows.length; i++) {
-        var id = arrows[i].id;
-        if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) && arrows[i].getBoundingClientRect().width > 0) {
-            arrow = arrows[i];
-            break;
+        if (arrows[i].getBoundingClientRect().width === 0) continue;
+        var comboId = arrows[i].id.replace(/-arrow$/, '');
+        var combo = null;
+        try { combo = sap.ui.getCore().byId(comboId); } catch(e) {}
+        if (!combo || !combo.getItems) continue;
+        var items = combo.getItems();
+        var whItem = null;
+        for (var j = 0; j < items.length; j++) {
+            var txt = items[j].getText().trim().toLowerCase();
+            for (var k = 0; k < WH_TEXTS.length; k++) {
+                if (txt === WH_TEXTS[k] || txt.indexOf(WH_TEXTS[k]) > -1) {
+                    whItem = items[j];
+                    break;
+                }
+            }
+            if (whItem) break;
         }
+        if (!whItem) continue;
+        combo.setSelectedKey(whItem.getKey());
+        combo.setSelectedItem(whItem);
+        combo.setValue(whItem.getText().trim());
+        combo.fireSelectionChange({selectedItem: whItem});
+        combo.fireChange({value: whItem.getText().trim()});
+        return 'WAREHOUSE_SET';
     }
-    if (!arrow) return 'FAIL';
-    var comboId = arrow.id.replace('-arrow', '');
-    var combo = sap.ui.getCore().byId(comboId);
-    if (!combo) return 'FAIL';
-    var items = combo.getItems();
-    var whItem = null;
-    for (var j = 0; j < items.length; j++) {
-        var txt = items[j].getText().trim().toLowerCase();
-        if (txt === 'approved by destination warehouse keeper' || txt === 'approved by warehouse keeper') {
-            whItem = items[j];
-            break;
-        }
-    }
-    if (!whItem) return 'FAIL';
-    combo.setSelectedKey(whItem.getKey());
-    combo.setSelectedItem(whItem);
-    combo.setValue(whItem.getText().trim());
-    combo.fireSelectionChange({selectedItem: whItem});
-    combo.fireChange({value: whItem.getText().trim()});
-    return 'WAREHOUSE_SET';
+    return 'FAIL';
 }
 """
 
@@ -1236,19 +1235,11 @@ class ExciseScraperApp:
             self.root.after(0, lambda r=status_result, a=attempt: self._log(f"Status attempt {a}: {r}", "info"))
             if status_result == "APPROVED_SET":
                 break
-            if status_result in ("ARROW_NOT_FOUND", "COMBO_NOT_FOUND"):
-                self._sleep(0.5)
-            else:
-                break  # NO_APPROVED → go to warehouse path
+            self._sleep(0.5)  # not set yet — wait and retry
 
-        # PAD: ARROW_NOT_FOUND or COMBO_NOT_FOUND after retries → EndFilter (FilterSuccess=NO)
-        if status_result in ("ARROW_NOT_FOUND", "COMBO_NOT_FOUND"):
-            self.root.after(0, lambda r=status_result: self._log(f"Status combo not available ({r}) — skipping", "warning"))
-            return False
-
-        # PAD: NO_APPROVED → TryWarehouse (skip page size + Go on main path)
-        if status_result == "NO_APPROVED":
-            self.root.after(0, lambda: self._log("No Approved option — trying warehouse status", "info"))
+        # Still not set after retries → try warehouse fallback
+        if status_result != "APPROVED_SET":
+            self.root.after(0, lambda: self._log("No Approved option found — trying warehouse status", "info"))
             return self._try_warehouse_filter(page, search_term)
 
         # ── Page size → 1000 (retry up to 3x like PAD) ──
