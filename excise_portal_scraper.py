@@ -338,7 +338,18 @@ JS_CHECK_NO_DATA = """
             return "NO_DATA";  // nodata cell visible but different message — still loading
         }
     }
-    return "HAS_DATA";
+    // "HAS_DATA" only if a real SAP data table with at least one data row is visible —
+    // absence of the nodata cell alone is not enough (table may still be loading)
+    var tables = document.querySelectorAll("table");
+    for (var t = 0; t < tables.length; t++) {
+        var rect = tables[t].getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0 && tables[t].querySelector("th.sapMListTblHeaderCell")) {
+            if (tables[t].querySelector("tr td.sapMListTblCell")) {
+                return "HAS_DATA";
+            }
+        }
+    }
+    return "NO_DATA";  // table not rendered or has no rows yet
 }
 """
 
@@ -1435,17 +1446,23 @@ class ExciseScraperApp:
     # ── Download all rows (mirrors PAD Downloader) ────────────────────────────
 
     def _download_rows(self, page, download_dir, dest_folder):
-        self._sleep(0.5)
+        # Poll until the SAP table is visible and has rows — up to 20s
+        table_id = "TABLE_NOT_FOUND"
+        total_rows = 0
+        for attempt in range(40):
+            table_id = page.evaluate(JS_FIND_TABLE)
+            if table_id != "TABLE_NOT_FOUND":
+                rc_text = page.evaluate(JS_GET_ROW_COUNT)
+                total_rows = int(rc_text) if rc_text.isdigit() else 0
+                if total_rows > 0:
+                    break
+            self.root.after(0, lambda a=attempt: self._log(f"Waiting for table... (attempt {a+1})", "info") if a % 4 == 0 else None)
+            self._sleep(0.5)
 
-        # Find table
-        table_id = page.evaluate(JS_FIND_TABLE)
         if table_id == "TABLE_NOT_FOUND":
-            self.root.after(0, lambda: self._log("Table not found for download", "error"))
+            self.root.after(0, lambda: self._log("Table not found after 20s — skipping", "error"))
             return 0, 0, 0
 
-        # Row count
-        rc_text = page.evaluate(JS_GET_ROW_COUNT)
-        total_rows = int(rc_text) if rc_text.isdigit() else 0
         self.root.after(0, lambda tr=total_rows: self._log(f"Rows to download: {tr}", "success"))
 
         if total_rows == 0:
