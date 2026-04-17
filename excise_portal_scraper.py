@@ -432,7 +432,8 @@ JS_GET_PAGE_SIZE = """
 
 JS_CLEAR_POPUPS = """
 () => {
-    document.body.click();
+    // Close open SAP popups via their own API only — document.body.click() would
+    // trigger SAP's filter-bar outside-click handler and reset the status combo.
     var openPopups = document.querySelectorAll("div[class*='sapMPopover'], div[class*='sapMDialog'], div[class*='sapUiPopup'], div[class*='sapMActionSheet']");
     for (var p = 0; p < openPopups.length; p++) {
         var rect = openPopups[p].getBoundingClientRect();
