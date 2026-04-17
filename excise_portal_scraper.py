@@ -1321,26 +1321,42 @@ class ExciseScraperApp:
 
     # ── ApplyFilters (mirrors PAD ApplyFilters function) ──────────────────────
 
-    def _apply_filters(self, page, search_term):
-        search_term = search_term.lower()
-
-        # Wait until the search input is actually present and visible (up to 10s)
-        for _ in range(20):
+    def _wait_for_filter_controls(self, page):
+        """Poll up to 15s until both the search input AND the status combo arrow are visible."""
+        for _ in range(30):
             ready = page.evaluate("""
             () => {
+                var searchOk = false;
                 var all = document.querySelectorAll('input[type="search"][placeholder="Search"]');
                 for (var i = 0; i < all.length; i++) {
                     var id = all[i].id;
                     var isMain = id.indexOf('_searchField-I') > -1 ||
                                  (id.indexOf('Search-I') > -1 && id.indexOf('searchbar') === -1);
-                    if (isMain && all[i].getBoundingClientRect().width > 0) return 'ready';
+                    if (isMain && all[i].getBoundingClientRect().width > 0) { searchOk = true; break; }
+                }
+                if (!searchOk) return 'not ready';
+                var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
+                for (var j = 0; j < arrows.length; j++) {
+                    var id = arrows[j].id;
+                    if ((id.indexOf('Status_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 ||
+                         id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) &&
+                         arrows[j].getBoundingClientRect().width > 0) {
+                        return 'ready';
+                    }
                 }
                 return 'not ready';
             }
             """)
             if ready == "ready":
-                break
+                return True
             self._sleep(0.5)
+        return False  # timed out — combo not found
+
+    def _apply_filters(self, page, search_term):
+        search_term = search_term.lower()
+
+        # Wait until both the search input and status combo are visible (up to 15s)
+        self._wait_for_filter_controls(page)
 
         # ── Search (retry up to 3x like PAD) ──
         search_ok = False
@@ -1391,6 +1407,9 @@ class ExciseScraperApp:
         go_result = page.evaluate(JS_CLICK_GO)
         self.root.after(0, lambda r=go_result: self._log(f"Go button: {r}", "info"))
 
+        # Wait 1.5s for SAP to clear old rows before polling — avoids HAS_DATA false positive
+        self._sleep(1.5)
+
         # ── Poll every 0.5s — react the instant SAP responds ──
         check = "NO_DATA"
         for _ in range(60):  # up to 30s
@@ -1409,7 +1428,12 @@ class ExciseScraperApp:
 
     def _try_warehouse_filter(self, page, search_term):
         """PAD TryWarehouse block."""
+        search_term = search_term.lower()
         self.root.after(0, lambda: self._log("Trying warehouse keeper status...", "info"))
+
+        # Wait for filter controls to be ready before touching them
+        self._wait_for_filter_controls(page)
+
         wh = page.evaluate(JS_SET_STATUS_WAREHOUSE)
         self.root.after(0, lambda r=wh: self._log(f"Warehouse status: {r}", "info"))
         if wh == "FAIL":
@@ -1422,6 +1446,9 @@ class ExciseScraperApp:
         self._sleep(0.5)
         go_result = page.evaluate(JS_CLICK_GO)
         self.root.after(0, lambda r=go_result: self._log(f"Warehouse Go: {r}", "info"))
+
+        # Wait 1.5s for SAP to clear old rows before polling
+        self._sleep(1.5)
 
         check = "NO_DATA"
         for _ in range(60):  # poll every 0.5s up to 30s
