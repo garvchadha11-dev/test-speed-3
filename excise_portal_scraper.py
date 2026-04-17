@@ -175,13 +175,17 @@ def js_search(search_term):
         var all = document.querySelectorAll('input[type="search"][placeholder="Search"]');
         var el = null;
         for (var i = 0; i < all.length; i++) {{
-            if (all[i].id.indexOf('_searchField-I') > -1 && all[i].getBoundingClientRect().width > 0) {{
+            var id = all[i].id;
+            // Match _searchField-I or *Search-I but NOT status combobox searchbar-I
+            var isMainSearch = id.indexOf('_searchField-I') > -1 ||
+                               (id.indexOf('Search-I') > -1 && id.indexOf('searchbar') === -1);
+            if (isMainSearch && all[i].getBoundingClientRect().width > 0) {{
                 el = all[i];
                 break;
             }}
         }}
         if (!el) return 'FAIL';
-        var sapId = el.id.replace('-I', '');
+        var sapId = el.id.replace(/-I$/, '');
         var ctrl = sap.ui.getCore().byId(sapId);
         if (!ctrl) return 'FAIL';
         ctrl.setValue('{search_term}');
@@ -196,7 +200,10 @@ def js_verify_search(search_term):
     () => {{
         var all = document.querySelectorAll('input[type="search"][placeholder="Search"]');
         for (var i = 0; i < all.length; i++) {{
-            if (all[i].id.indexOf('_searchField-I') > -1 && all[i].getBoundingClientRect().width > 0) {{
+            var id = all[i].id;
+            var isMainSearch = id.indexOf('_searchField-I') > -1 ||
+                               (id.indexOf('Search-I') > -1 && id.indexOf('searchbar') === -1);
+            if (isMainSearch && all[i].getBoundingClientRect().width > 0) {{
                 return all[i].value;
             }}
         }}
@@ -341,24 +348,36 @@ JS_CHECK_NO_DATA = """
 
 JS_FIND_TABLE = """
 () => {
-    var tables = document.querySelectorAll("table[id*='_Table-listUl'], table[id*='_List_table-listUl']");
+    function _visibleTable(t) {
+        var r = t.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    }
+    // Pass 1: known SAP list-table ID patterns
+    var tables = document.querySelectorAll("table[id*='_Table-listUl'], table[id*='_List_table-listUl'], table[id*='-listUl']");
     for (var t = 0; t < tables.length; t++) {
-        var rect = tables[t].getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
+        if (_visibleTable(tables[t]) && tables[t].id) {
             window.__PAD_TABLE_ID = tables[t].id;
             return tables[t].id;
         }
     }
+    // Pass 2: any visible SAP table (has sapMListTblHeaderCell th) — catches ETP/myDec_LIST style IDs
     var allTables = document.querySelectorAll("table");
     for (var t = 0; t < allTables.length; t++) {
-        var rect = allTables[t].getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
-            var headers = allTables[t].querySelectorAll("th");
-            for (var h = 0; h < headers.length; h++) {
-                if (headers[h].innerText.trim() === "Transaction Number") {
-                    window.__PAD_TABLE_ID = allTables[t].id;
-                    return allTables[t].id;
-                }
+        if (!_visibleTable(allTables[t]) || !allTables[t].id) continue;
+        if (allTables[t].querySelector("th.sapMListTblHeaderCell")) {
+            window.__PAD_TABLE_ID = allTables[t].id;
+            return allTables[t].id;
+        }
+    }
+    // Pass 3: header text fallback
+    for (var t = 0; t < allTables.length; t++) {
+        if (!_visibleTable(allTables[t])) continue;
+        var headers = allTables[t].querySelectorAll("th");
+        for (var h = 0; h < headers.length; h++) {
+            var txt = headers[h].innerText.trim();
+            if (txt === "Transaction Number" || txt === "Excise Tax Period" || txt === "Declaration Number") {
+                window.__PAD_TABLE_ID = allTables[t].id;
+                return allTables[t].id;
             }
         }
     }
@@ -370,13 +389,30 @@ JS_GET_ROW_COUNT = """
 () => {
     var tableId = String(window.__PAD_TABLE_ID || "");
     if (!tableId) return "0";
-    var baseId = tableId.replace("-listUl", "");
-    var rowCountSpan = document.getElementById(baseId + "_rowCount");
-    if (!rowCountSpan) return "0";
-    var text = String(rowCountSpan.innerText || rowCountSpan.textContent || "");
-    var m = text.match(/of\\s+([\\d,]+)\\s+records?/i);
-    if (!m) m = text.match(/([\\d,]+)/);
-    return m ? String(m[1]).replace(/,/g, "") : "0";
+    var sapTableId = tableId.replace("-listUl", "");
+    var sapTable = sap.ui.getCore().byId(sapTableId);
+    // Primary: SAP binding length — works for all declaration types
+    if (sapTable) {
+        var binding = sapTable.getBinding('items');
+        if (binding && typeof binding.getLength === 'function') {
+            var len = binding.getLength();
+            if (len > 0) return String(len);
+        }
+    }
+    // Fallback: row-count toolbar span
+    var rowCountSpan = document.getElementById(sapTableId + "_rowCount");
+    if (rowCountSpan) {
+        var text = String(rowCountSpan.innerText || rowCountSpan.textContent || "");
+        var m = text.match(/of\\s+([\\d,]+)\\s+records?/i);
+        if (!m) m = text.match(/([\\d,]+)/);
+        if (m) return String(m[1]).replace(/,/g, "");
+    }
+    // Last resort: count rendered SAP items
+    if (sapTable && sapTable.getItems) {
+        var n = sapTable.getItems().length;
+        if (n > 0) return String(n);
+    }
+    return "0";
 }
 """
 
@@ -441,11 +477,9 @@ JS_CLICK_EXPORT = """
 
 JS_CLICK_NEXT = """
 () => {
-    var nextBtn = document.getElementById("__xmlview19--ExciseList_myDecl_Table_next-inner");
-    if (!nextBtn) {
-        var candidates = document.querySelectorAll("button[id*='_Table_next'], span[id*='_Table_next-inner']");
-        if (candidates.length > 0) nextBtn = candidates[0];
-    }
+    var nextBtn = null;
+    var candidates = document.querySelectorAll("button[id*='_Table_next'], span[id*='_Table_next-inner']");
+    if (candidates.length > 0) nextBtn = candidates[0];
     if (!nextBtn) return "NEXT_NOT_FOUND";
     var btn = nextBtn.closest("button");
     if (btn) {
