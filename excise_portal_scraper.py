@@ -1321,8 +1321,24 @@ class ExciseScraperApp:
 
     # ── ApplyFilters (mirrors PAD ApplyFilters function) ──────────────────────
 
+    def _wait_not_busy(self, page, timeout_s=30):
+        """Block until SAP's busy indicator is gone (up to timeout_s seconds)."""
+        for _ in range(timeout_s * 2):
+            busy = page.evaluate("""
+            () => {
+                var b = document.querySelector('.sapUiLocalBusyIndicatorAnimation');
+                if (b && b.getBoundingClientRect().width > 0) return 'busy';
+                return 'idle';
+            }
+            """)
+            if busy == "idle":
+                return
+            self._sleep(0.5)
+        self.root.after(0, lambda: self._log("Busy indicator still present after timeout — continuing anyway", "warning"))
+
     def _wait_for_filter_controls(self, page):
-        """Poll up to 15s until both the search input AND the status combo arrow are visible."""
+        """Poll up to 15s until SAP is not busy AND both filter controls are visible."""
+        self._wait_not_busy(page)
         for _ in range(30):
             ready = page.evaluate("""
             () => {
@@ -1475,6 +1491,9 @@ class ExciseScraperApp:
     def _download_rows(self, page, download_dir, dest_folder):
         # Give the portal 3s to start rendering after the filter is applied
         self._sleep(3)
+
+        # Wait for SAP to finish loading before counting rows
+        self._wait_not_busy(page)
 
         # Poll until the SAP table is visible and has rows — up to 20s
         table_id = "TABLE_NOT_FOUND"
