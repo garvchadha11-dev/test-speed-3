@@ -143,7 +143,7 @@ JS_WAIT_FOR_TABLE = """
     var tables = document.querySelectorAll('table');
     for (var t = 0; t < tables.length; t++) {
         var rect = tables[t].getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
+        if (rect.width > 0 && rect.height > 0 && tables[t].querySelector('th.sapMListTblHeaderCell')) {
             return 'found';
         }
     }
@@ -654,7 +654,8 @@ class ExciseScraperApp:
         self.root = tk.Tk()
         self.root.title("FTA Excise Portal Scraper")
         self.root.configure(bg=BG)
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
+        self.root.minsize(600, 700)
         self._center(740, 860)
 
         self.is_running = False
@@ -1290,7 +1291,24 @@ class ExciseScraperApp:
 
     def _apply_filters(self, page, search_term):
         search_term = search_term.lower()
-        self._sleep(2)
+
+        # Wait until the search input is actually present and visible (up to 10s)
+        for _ in range(20):
+            ready = page.evaluate("""
+            () => {
+                var all = document.querySelectorAll('input[type="search"][placeholder="Search"]');
+                for (var i = 0; i < all.length; i++) {
+                    var id = all[i].id;
+                    var isMain = id.indexOf('_searchField-I') > -1 ||
+                                 (id.indexOf('Search-I') > -1 && id.indexOf('searchbar') === -1);
+                    if (isMain && all[i].getBoundingClientRect().width > 0) return 'ready';
+                }
+                return 'not ready';
+            }
+            """)
+            if ready == "ready":
+                break
+            self._sleep(0.5)
 
         # ── Search (retry up to 3x like PAD) ──
         search_ok = False
