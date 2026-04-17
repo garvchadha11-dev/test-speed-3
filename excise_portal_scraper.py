@@ -1446,6 +1446,9 @@ class ExciseScraperApp:
     # ── Download all rows (mirrors PAD Downloader) ────────────────────────────
 
     def _download_rows(self, page, download_dir, dest_folder):
+        # Give the portal 3s to start rendering after the filter is applied
+        self._sleep(3)
+
         # Poll until the SAP table is visible and has rows — up to 20s
         table_id = "TABLE_NOT_FOUND"
         total_rows = 0
