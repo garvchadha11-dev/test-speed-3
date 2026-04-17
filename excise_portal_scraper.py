@@ -17,7 +17,7 @@ import queue
 
 try:
     import tkinter as tk
-    from tkinter import ttk, filedialog
+    from tkinter import ttk, filedialog, messagebox
 except ImportError:
     print("ERROR: tkinter is not available. Reinstall Python and check 'tcl/tk' option.")
     input("Press Enter to close...")
@@ -1541,7 +1541,7 @@ class ExciseScraperApp:
                 break
 
             # Pagination
-            if page_row_index >= page_size and total_rows > 1000:
+            if page_row_index >= page_size:
                 self.root.after(0, lambda: self._log("Next page...", "accent"))
                 nr = page.evaluate(JS_CLICK_NEXT)
                 if nr in ("NEXT_NOT_FOUND", "NEXT_DISABLED"):
@@ -1600,8 +1600,9 @@ class ExciseScraperApp:
                 if not os.path.exists(dest):
                     download.save_as(dest)
                 else:
-                    download.save_as(dest + ".tmp")
-                    os.remove(dest + ".tmp")
+                    alt = dest.replace(".xlsx", "_dup.xlsx")
+                    download.save_as(alt)
+                    self.root.after(0, lambda t=txn: self._log(f"Duplicate TXN {t} — saved as _dup", "warning"))
                 new_file = dest
                 export_ok = True
             except Exception as e:
@@ -1626,13 +1627,20 @@ class ExciseScraperApp:
                             if not os.path.exists(dest):
                                 shutil.move(new_file, dest)
                             else:
-                                os.remove(new_file)
+                                alt = dest.replace(".xlsx", "_dup.xlsx")
+                                shutil.move(new_file, alt)
+                                self.root.after(0, lambda t=txn: self._log(f"Duplicate TXN {t} — saved as _dup", "warning"))
                             new_file = dest
                             break
 
-            downloaded += 1
-            _ri, _tn = row_index, txn
-            self.root.after(0, lambda ri=_ri, tn=_tn: self._log(f"✓ {tn}", "success"))
+            if new_file is not None:
+                downloaded += 1
+                _ri, _tn = row_index, txn
+                self.root.after(0, lambda ri=_ri, tn=_tn: self._log(f"✓ {tn}", "success"))
+            else:
+                skipped += 1
+                _tn = txn
+                self.root.after(0, lambda tn=_tn: self._log(f"Download failed: {tn}", "error"))
 
             row_index += 1
             page_row_index += 1
@@ -1840,7 +1848,7 @@ class ExciseScraperApp:
             wb_out.save(combined_path)
             self.root.after(0, lambda p=combined_path, n=total_rows_written: self._log(
                 f"Combined {n} rows → {p}", "success"))
-            self.root.after(0, lambda p=combined_path: tk.messagebox.showinfo(
+            self.root.after(0, lambda p=combined_path: messagebox.showinfo(
                 "Complete", f"All files combined into:\n{p}"))
         except Exception as e:
             self.root.after(0, lambda err=str(e): self._log(f"Save failed: {err}", "error"))
