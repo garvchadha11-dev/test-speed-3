@@ -140,6 +140,8 @@ def js_click_panel(panel_id):
 
 JS_WAIT_FOR_TABLE = """
 () => {
+    var b = document.querySelector('.sapUiLocalBusyIndicatorAnimation');
+    if (b && b.getBoundingClientRect().width > 0) return 'not found';
     var tables = document.querySelectorAll('table');
     for (var t = 0; t < tables.length; t++) {
         var rect = tables[t].getBoundingClientRect();
@@ -328,18 +330,20 @@ JS_CLICK_GO = """
 
 JS_CHECK_NO_DATA = """
 () => {
+    // If SAP is still loading, do not evaluate anything — keep waiting
+    var b = document.querySelector('.sapUiLocalBusyIndicatorAnimation');
+    if (b && b.getBoundingClientRect().width > 0) return "NO_DATA";
+
     var noData = document.querySelectorAll("td[id*='nodata-text']");
     for (var i = 0; i < noData.length; i++) {
         var rect = noData[i].getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
             if (noData[i].textContent.indexOf("No records found") > -1) {
-                return "NO_RECORDS";  // definitive server response — stop retrying
+                return "NO_RECORDS";
             }
-            return "NO_DATA";  // nodata cell visible but different message — still loading
+            return "NO_DATA";
         }
     }
-    // "HAS_DATA" only if a real SAP data table with at least one data row is visible —
-    // absence of the nodata cell alone is not enough (table may still be loading)
     var tables = document.querySelectorAll("table");
     for (var t = 0; t < tables.length; t++) {
         var rect = tables[t].getBoundingClientRect();
@@ -349,7 +353,7 @@ JS_CHECK_NO_DATA = """
             }
         }
     }
-    return "NO_DATA";  // table not rendered or has no rows yet
+    return "NO_DATA";
 }
 """
 
@@ -359,6 +363,8 @@ JS_CHECK_NO_DATA = """
 
 JS_FIND_TABLE = """
 () => {
+    var b = document.querySelector('.sapUiLocalBusyIndicatorAnimation');
+    if (b && b.getBoundingClientRect().width > 0) return 'TABLE_NOT_FOUND';
     function _visibleTable(t) {
         var r = t.getBoundingClientRect();
         return r.width > 0 && r.height > 0;
