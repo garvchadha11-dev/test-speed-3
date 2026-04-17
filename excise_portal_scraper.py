@@ -1234,18 +1234,38 @@ class ExciseScraperApp:
 
                     panel_open = True
 
-                # ── 3. Apply Filters ──
-                filter_ok = self._apply_filters(page, search_term)
-                if not filter_ok:
-                    self.root.after(0, lambda: self._log("No data after filtering — skipping", "warning"))
-                    # Stay on same panel for next term — no navigate_back needed
+                # ── 3 & 4. Two-pass download: Approved then Warehouse Keeper ──
+                approved_result = self._apply_filters(page, search_term)
+
+                if approved_result == "NO_COMBO":
+                    # Status combo missing entirely — skip both passes
+                    self.root.after(0, lambda: self._log("No status filter on this panel — skipping", "warning"))
                     continue
 
-                # ── 4. Download all rows ──
-                dl, sk, tot = self._download_rows(page, download_dir, dest_folder)
-                grand_downloaded += dl
-                grand_skipped += sk
-                grand_total += tot
+                got_any_data = False
+
+                # Pass A: Approved rows
+                if approved_result:
+                    self.root.after(0, lambda: self._log("Pass A: downloading Approved rows...", "accent"))
+                    dl, sk, tot = self._download_rows(page, download_dir, dest_folder)
+                    grand_downloaded += dl
+                    grand_skipped += sk
+                    grand_total += tot
+                    got_any_data = got_any_data or (dl + sk > 0)
+
+                # Pass B: Approved by Warehouse Keeper rows (always attempted — both statuses can coexist)
+                self.root.after(0, lambda: self._log("Pass B: trying Warehouse Keeper rows...", "accent"))
+                wh_ok = self._try_warehouse_filter(page, search_term)
+                if wh_ok:
+                    dl, sk, tot = self._download_rows(page, download_dir, dest_folder)
+                    grand_downloaded += dl
+                    grand_skipped += sk
+                    grand_total += tot
+                    got_any_data = got_any_data or (dl + sk > 0)
+
+                if not got_any_data:
+                    self.root.after(0, lambda: self._log("No data found in either pass — skipping", "warning"))
+                    continue
 
                 # ── 4b. Wait for page to settle before next month ──
                 is_last_term = (term_idx == len(search_terms) - 1)
@@ -1336,15 +1356,15 @@ class ExciseScraperApp:
             else:
                 break  # NO_APPROVED → go to warehouse path
 
-        # PAD: ARROW_NOT_FOUND or COMBO_NOT_FOUND after retries → EndFilter (FilterSuccess=NO)
+        # No status combo on this panel at all — signal caller to skip both passes
         if status_result in ("ARROW_NOT_FOUND", "COMBO_NOT_FOUND"):
             self.root.after(0, lambda r=status_result: self._log(f"Status combo not available ({r}) — skipping", "warning"))
-            return False
+            return "NO_COMBO"
 
-        # PAD: NO_APPROVED → TryWarehouse (skip page size + Go on main path)
+        # No Approved option in the list — caller will still try warehouse pass
         if status_result == "NO_APPROVED":
-            self.root.after(0, lambda: self._log("No Approved option — trying warehouse status", "info"))
-            return self._try_warehouse_filter(page, search_term)
+            self.root.after(0, lambda: self._log("No Approved option in combo — skipping Approved pass", "info"))
+            return False
 
         # ── Page size → 1000 (retry up to 3x like PAD) ──
         for attempt in range(4):
@@ -1370,11 +1390,10 @@ class ExciseScraperApp:
         self.root.after(0, lambda c=check: self._log(f"Data check: {c}", "info"))
 
         if check == "HAS_DATA":
-            self.root.after(0, lambda: self._log("Filter OK — data found", "success"))
+            self.root.after(0, lambda: self._log("Approved filter — data found", "success"))
             return True
 
-        # NO_RECORDS or still NO_DATA after 30s → try warehouse
-        return self._try_warehouse_filter(page, search_term)
+        return False
 
     def _try_warehouse_filter(self, page, search_term):
         """PAD TryWarehouse block."""
