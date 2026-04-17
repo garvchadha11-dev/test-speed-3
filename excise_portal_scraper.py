@@ -1325,6 +1325,17 @@ class ExciseScraperApp:
         if remainder > 0 and not self.stop_requested:
             time.sleep(remainder)
 
+    def _wait_for_page_load(self, page):
+        """After clicking Go: wait for busy indicator to appear, then wait for it to fully clear."""
+        # Give SAP up to 3s to start the request (busy indicator appears)
+        for _ in range(6):
+            self._sleep(0.5)
+            busy = page.evaluate("() => { var b = document.querySelector('.sapUiLocalBusyIndicatorAnimation'); return (b && b.getBoundingClientRect().width > 0) ? 'busy' : 'idle'; }")
+            if busy == "busy":
+                break
+        # Now wait for busy to fully clear before proceeding
+        self._wait_not_busy(page, timeout_s=60)
+
     # ── ApplyFilters (mirrors PAD ApplyFilters function) ──────────────────────
 
     def _wait_not_busy(self, page, timeout_s=30):
@@ -1429,17 +1440,10 @@ class ExciseScraperApp:
         go_result = page.evaluate(JS_CLICK_GO)
         self.root.after(0, lambda r=go_result: self._log(f"Go button: {r}", "info"))
 
-        # Wait 1.5s for SAP to clear old rows before polling — avoids HAS_DATA false positive
-        self._sleep(1.5)
+        # Wait for SAP to start loading then fully finish before checking result
+        self._wait_for_page_load(page)
 
-        # ── Poll every 0.5s — react the instant SAP responds ──
-        check = "NO_DATA"
-        for _ in range(60):  # up to 30s
-            self._sleep(0.5)
-            check = page.evaluate(JS_CHECK_NO_DATA)
-            if check in ("HAS_DATA", "NO_RECORDS"):
-                break
-
+        check = page.evaluate(JS_CHECK_NO_DATA)
         self.root.after(0, lambda c=check: self._log(f"Data check: {c}", "info"))
 
         if check == "HAS_DATA":
@@ -1469,16 +1473,10 @@ class ExciseScraperApp:
         go_result = page.evaluate(JS_CLICK_GO)
         self.root.after(0, lambda r=go_result: self._log(f"Warehouse Go: {r}", "info"))
 
-        # Wait 1.5s for SAP to clear old rows before polling
-        self._sleep(1.5)
+        # Wait for SAP to start loading then fully finish before checking result
+        self._wait_for_page_load(page)
 
-        check = "NO_DATA"
-        for _ in range(60):  # poll every 0.5s up to 30s
-            self._sleep(0.5)
-            check = page.evaluate(JS_CHECK_NO_DATA)
-            if check in ("HAS_DATA", "NO_RECORDS"):
-                break
-
+        check = page.evaluate(JS_CHECK_NO_DATA)
         self.root.after(0, lambda c=check: self._log(f"Warehouse data check: {c}", "info"))
         if check == "HAS_DATA":
             self.root.after(0, lambda: self._log("Warehouse filter — data found", "success"))
