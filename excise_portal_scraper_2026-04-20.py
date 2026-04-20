@@ -257,35 +257,52 @@ JS_SET_STATUS_APPROVED = """
     var tableId = String(window.__PAD_TABLE_ID || '');
     var viewPrefix = '';
     if (tableId) { var d = tableId.indexOf('--'); if (d > -1) viewPrefix = tableId.substring(0, d + 2); }
+
+    function trySetApproved(arrowEl) {
+        var comboId = arrowEl.id.replace('-arrow', '');
+        var combo = sap.ui.getCore().byId(comboId);
+        if (!combo) return null;
+        var items = combo.getItems();
+        for (var j = 0; j < items.length; j++) {
+            if (items[j].getText().trim() === 'Approved') {
+                combo.setSelectedKey(items[j].getKey());
+                combo.setSelectedItem(items[j]);
+                combo.setValue('Approved');
+                combo.fireSelectionChange({selectedItem: items[j]});
+                combo.fireChange({value: 'Approved'});
+                return 'APPROVED_SET';
+            }
+        }
+        if (items.length > 0) return 'NO_APPROVED';
+        return null;
+    }
+
     var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
-    var arrow = null;
+
+    // Pass 1: known status keyword patterns
     for (var i = 0; i < arrows.length; i++) {
         var id = arrows[i].id;
         if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
-        if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) && arrows[i].getBoundingClientRect().width > 0) {
-            arrow = arrows[i];
-            break;
+        if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 ||
+             id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) &&
+            arrows[i].getBoundingClientRect().width > 0) {
+            var r = trySetApproved(arrows[i]);
+            if (r) return r;
         }
     }
-    if (!arrow) return 'ARROW_NOT_FOUND';
-    var comboId = arrow.id.replace('-arrow', '');
-    var combo = sap.ui.getCore().byId(comboId);
-    if (!combo) return 'COMBO_NOT_FOUND';
-    var items = combo.getItems();
-    var approvedItem = null;
-    for (var j = 0; j < items.length; j++) {
-        if (items[j].getText().trim() === 'Approved') {
-            approvedItem = items[j];
-            break;
+
+    // Pass 2: any visible combo in same view that has an Approved item
+    for (var i = 0; i < arrows.length; i++) {
+        var id = arrows[i].id;
+        if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
+        if (id.indexOf('perpage') > -1) continue;  // skip page-size combo
+        if (arrows[i].getBoundingClientRect().width > 0) {
+            var r = trySetApproved(arrows[i]);
+            if (r) return r;
         }
     }
-    if (!approvedItem) return 'NO_APPROVED';
-    combo.setSelectedKey(approvedItem.getKey());
-    combo.setSelectedItem(approvedItem);
-    combo.setValue(approvedItem.getText().trim());
-    combo.fireSelectionChange({selectedItem: approvedItem});
-    combo.fireChange({value: approvedItem.getText().trim()});
-    return 'APPROVED_SET';
+
+    return 'ARROW_NOT_FOUND';
 }
 """
 
@@ -294,36 +311,53 @@ JS_SET_STATUS_WAREHOUSE = """
     var tableId = String(window.__PAD_TABLE_ID || '');
     var viewPrefix = '';
     if (tableId) { var d = tableId.indexOf('--'); if (d > -1) viewPrefix = tableId.substring(0, d + 2); }
+
+    function trySetWarehouse(arrowEl) {
+        var comboId = arrowEl.id.replace('-arrow', '');
+        var combo = sap.ui.getCore().byId(comboId);
+        if (!combo) return null;
+        var items = combo.getItems();
+        for (var j = 0; j < items.length; j++) {
+            var txt = items[j].getText().trim().toLowerCase();
+            if (txt === 'approved by destination warehouse keeper' || txt === 'approved by warehouse keeper') {
+                combo.setSelectedKey(items[j].getKey());
+                combo.setSelectedItem(items[j]);
+                combo.setValue(items[j].getText().trim());
+                combo.fireSelectionChange({selectedItem: items[j]});
+                combo.fireChange({value: items[j].getText().trim()});
+                return 'WAREHOUSE_SET';
+            }
+        }
+        if (items.length > 0) return 'NOT_FOUND';
+        return null;
+    }
+
     var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
-    var arrow = null;
+
+    // Pass 1: known status keyword patterns
     for (var i = 0; i < arrows.length; i++) {
         var id = arrows[i].id;
         if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
-        if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) && arrows[i].getBoundingClientRect().width > 0) {
-            arrow = arrows[i];
-            break;
+        if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 ||
+             id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) &&
+            arrows[i].getBoundingClientRect().width > 0) {
+            var r = trySetWarehouse(arrows[i]);
+            if (r) return r;
         }
     }
-    if (!arrow) return 'FAIL';
-    var comboId = arrow.id.replace('-arrow', '');
-    var combo = sap.ui.getCore().byId(comboId);
-    if (!combo) return 'FAIL';
-    var items = combo.getItems();
-    var whItem = null;
-    for (var j = 0; j < items.length; j++) {
-        var txt = items[j].getText().trim().toLowerCase();
-        if (txt === 'approved by destination warehouse keeper' || txt === 'approved by warehouse keeper') {
-            whItem = items[j];
-            break;
+
+    // Pass 2: any visible combo in same view that has a warehouse item
+    for (var i = 0; i < arrows.length; i++) {
+        var id = arrows[i].id;
+        if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
+        if (id.indexOf('perpage') > -1) continue;
+        if (arrows[i].getBoundingClientRect().width > 0) {
+            var r = trySetWarehouse(arrows[i]);
+            if (r) return r;
         }
     }
-    if (!whItem) return 'FAIL';
-    combo.setSelectedKey(whItem.getKey());
-    combo.setSelectedItem(whItem);
-    combo.setValue(whItem.getText().trim());
-    combo.fireSelectionChange({selectedItem: whItem});
-    combo.fireChange({value: whItem.getText().trim()});
-    return 'WAREHOUSE_SET';
+
+    return 'FAIL';
 }
 """
 
