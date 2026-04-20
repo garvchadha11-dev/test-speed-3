@@ -174,14 +174,27 @@ def js_search(search_term):
     () => {{
         var all = document.querySelectorAll('input[type="search"][placeholder="Search"]');
         var el = null;
+        // Pass 1: preferred pattern (_searchField-I)
         for (var i = 0; i < all.length; i++) {{
-            var id = all[i].id;
-            // Match _searchField-I or *Search-I but NOT status combobox searchbar-I
-            var isMainSearch = id.indexOf('_searchField-I') > -1 ||
-                               (id.indexOf('Search-I') > -1 && id.indexOf('searchbar') === -1);
-            if (isMainSearch && all[i].getBoundingClientRect().width > 0) {{
-                el = all[i];
-                break;
+            if (all[i].id.indexOf('_searchField-I') > -1 && all[i].getBoundingClientRect().width > 0) {{
+                el = all[i]; break;
+            }}
+        }}
+        // Pass 2: any other Search-I pattern excluding searchbar
+        if (!el) {{
+            for (var i = 0; i < all.length; i++) {{
+                var id = all[i].id;
+                if (id.indexOf('Search-I') > -1 && id.indexOf('searchbar') === -1 && all[i].getBoundingClientRect().width > 0) {{
+                    el = all[i]; break;
+                }}
+            }}
+        }}
+        // Pass 3: fallback — any visible search input (covers panels with searchbar-style IDs)
+        if (!el) {{
+            for (var i = 0; i < all.length; i++) {{
+                if (all[i].getBoundingClientRect().width > 0) {{
+                    el = all[i]; break;
+                }}
             }}
         }}
         if (!el) return 'FAIL';
@@ -200,10 +213,17 @@ def js_verify_search(search_term):
     () => {{
         var all = document.querySelectorAll('input[type="search"][placeholder="Search"]');
         for (var i = 0; i < all.length; i++) {{
-            var id = all[i].id;
-            var isMainSearch = id.indexOf('_searchField-I') > -1 ||
-                               (id.indexOf('Search-I') > -1 && id.indexOf('searchbar') === -1);
-            if (isMainSearch && all[i].getBoundingClientRect().width > 0) {{
+            if (all[i].id.indexOf('_searchField-I') > -1 && all[i].getBoundingClientRect().width > 0) {{
+                return all[i].value;
+            }}
+        }}
+        for (var i = 0; i < all.length; i++) {{
+            if (all[i].id.indexOf('Search-I') > -1 && all[i].id.indexOf('searchbar') === -1 && all[i].getBoundingClientRect().width > 0) {{
+                return all[i].value;
+            }}
+        }}
+        for (var i = 0; i < all.length; i++) {{
+            if (all[i].getBoundingClientRect().width > 0) {{
                 return all[i].value;
             }}
         }}
