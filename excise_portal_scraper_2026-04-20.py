@@ -1257,38 +1257,25 @@ class ExciseScraperApp:
 
                     panel_open = True
 
-                # ── 3 & 4. Two-pass download: Approved then Warehouse Keeper ──
-                approved_result = self._apply_filters(page, search_term)
+                # ── 3 & 4. Filter then download: Approved first, warehouse as fallback ──
+                filter_ok = self._apply_filters(page, search_term)
 
-                if approved_result == "NO_COMBO":
-                    # Status combo missing entirely — skip both passes
+                if filter_ok == "NO_COMBO":
                     self.root.after(0, lambda: self._log("No status filter on this panel — skipping", "warning"))
                     continue
 
-                got_any_data = False
+                if not filter_ok:
+                    # Approved gave no data — try warehouse keeper as fallback
+                    filter_ok = self._try_warehouse_filter(page, search_term)
 
-                # Pass A: Approved rows
-                if approved_result:
-                    self.root.after(0, lambda: self._log("Pass A: downloading Approved rows...", "accent"))
-                    dl, sk, tot = self._download_rows(page, download_dir, dest_folder)
-                    grand_downloaded += dl
-                    grand_skipped += sk
-                    grand_total += tot
-                    got_any_data = got_any_data or (dl + sk > 0)
-
-                # Pass B: Approved by Warehouse Keeper rows (always attempted — both statuses can coexist)
-                self.root.after(0, lambda: self._log("Pass B: trying Warehouse Keeper rows...", "accent"))
-                wh_ok = self._try_warehouse_filter(page, search_term)
-                if wh_ok:
-                    dl, sk, tot = self._download_rows(page, download_dir, dest_folder)
-                    grand_downloaded += dl
-                    grand_skipped += sk
-                    grand_total += tot
-                    got_any_data = got_any_data or (dl + sk > 0)
-
-                if not got_any_data:
-                    self.root.after(0, lambda: self._log("No data found in either pass — skipping", "warning"))
+                if not filter_ok:
+                    self.root.after(0, lambda: self._log("No data found after all filter attempts — skipping", "warning"))
                     continue
+
+                dl, sk, tot = self._download_rows(page, download_dir, dest_folder)
+                grand_downloaded += dl
+                grand_skipped += sk
+                grand_total += tot
 
                 # ── 4b. Wait for page to settle before next month ──
                 is_last_term = (term_idx == len(search_terms) - 1)
@@ -1349,23 +1336,23 @@ class ExciseScraperApp:
 
     def _apply_filters(self, page, search_term):
         search_term = search_term.lower()
-        self._sleep(1)
+        self._sleep(6)
 
-        # ── Search (retry up to 3x) ──
+        # ── Search (retry up to 3x, 2s between — match PAD) ──
         search_ok = False
         for attempt in range(4):
             sv = page.evaluate(js_search(search_term))
-            self._sleep(0.5)
+            self._sleep(2)
             verify = page.evaluate(js_verify_search(search_term))
             self.root.after(0, lambda v=verify, a=attempt: self._log(f"Search attempt {a}: got '{v}'", "info"))
             if verify == search_term:
                 search_ok = True
                 break
-            self._sleep(0.5)
+            self._sleep(2)
         if not search_ok:
             self.root.after(0, lambda: self._log("Search did not verify — continuing anyway", "warning"))
 
-        # ── Status → Approved (retry up to 3x) ──
+        # ── Status → Approved (retry up to 3x, 2s between — match PAD) ──
         status_result = "FAIL"
         for attempt in range(4):
             status_result = page.evaluate(JS_SET_STATUS_APPROVED)
@@ -1373,7 +1360,7 @@ class ExciseScraperApp:
             if status_result == "APPROVED_SET":
                 break
             if status_result in ("ARROW_NOT_FOUND", "COMBO_NOT_FOUND"):
-                self._sleep(0.5)
+                self._sleep(2)
             else:
                 break
 
@@ -1382,17 +1369,17 @@ class ExciseScraperApp:
             return "NO_COMBO"
 
         if status_result == "NO_APPROVED":
-            self.root.after(0, lambda: self._log("No Approved option in combo — skipping Approved pass", "info"))
+            self.root.after(0, lambda: self._log("No Approved option — trying warehouse", "info"))
             return False
 
-        # ── Page size → 1000 (retry up to 3x) ──
+        # ── Page size → 1000 (retry up to 3x, 3s post-wait — match PAD) ──
         for attempt in range(4):
             pv = page.evaluate(JS_SET_PAGE_1000)
             self.root.after(0, lambda v=pv, a=attempt: self._log(f"Page size attempt {a}: {v}", "info"))
             if pv == "1000":
                 break
-            self._sleep(0.5)
-        self._sleep(0.5)
+            self._sleep(2)
+        self._sleep(3)
 
         # ── Click Go ──
         go_result = page.evaluate(JS_CLICK_GO)
@@ -1417,16 +1404,21 @@ class ExciseScraperApp:
     def _try_warehouse_filter(self, page, search_term):
         search_term = search_term.lower()
         self.root.after(0, lambda: self._log("Trying warehouse keeper status...", "info"))
-        wh = page.evaluate(JS_SET_STATUS_WAREHOUSE)
-        self.root.after(0, lambda r=wh: self._log(f"Warehouse status: {r}", "info"))
-        if wh == "FAIL":
+        wh = "FAIL"
+        for attempt in range(4):
+            wh = page.evaluate(JS_SET_STATUS_WAREHOUSE)
+            self.root.after(0, lambda r=wh, a=attempt: self._log(f"Warehouse status attempt {a}: {r}", "info"))
+            if wh == "WAREHOUSE_SET":
+                break
+            self._sleep(2)
+        if wh != "WAREHOUSE_SET":
             self.root.after(0, lambda: self._log("Warehouse status not available — no data", "warning"))
             return False
-        self._sleep(0.5)
+        self._sleep(2)
         page.evaluate(js_search(search_term))
-        self._sleep(0.5)
+        self._sleep(2)
         page.evaluate(JS_SET_PAGE_1000)
-        self._sleep(0.5)
+        self._sleep(3)
         go_result = page.evaluate(JS_CLICK_GO)
         self.root.after(0, lambda r=go_result: self._log(f"Warehouse Go: {r}", "info"))
 
