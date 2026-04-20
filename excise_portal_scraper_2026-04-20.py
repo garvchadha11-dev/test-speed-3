@@ -1313,9 +1313,9 @@ class ExciseScraperApp:
                 filter_ok = self._apply_filters(page, search_term)
 
                 if filter_ok == "NO_COMBO":
-                    # Panel has no recognizable status combo — search + Go with no status filter
-                    self.root.after(0, lambda: self._log("No status combo — using search+Go only", "info"))
-                    filter_ok = self._try_no_status_filter(page, search_term)
+                    # Panel has no recognizable status combo — can't verify Approved, skip
+                    self.root.after(0, lambda: self._log("No status combo — cannot filter by Approved, skipping panel", "warning"))
+                    filter_ok = False
 
                 if filter_ok == "TRY_WAREHOUSE":
                     # No Approved option — try warehouse keeper status
@@ -1491,28 +1491,6 @@ class ExciseScraperApp:
         self.root.after(0, lambda: self._log("No data found after all filter attempts", "warning"))
         return False
 
-    def _try_no_status_filter(self, page, search_term):
-        """Panel has no status combo — just search + page size + Go."""
-        search_term = search_term.lower()
-        self.root.after(0, lambda: self._log("No status combo — search+Go only", "info"))
-        page.evaluate(js_search(search_term))
-        self._sleep(1)
-        page.evaluate(JS_SET_PAGE_1000)
-        self._sleep(1)
-        go_result = page.evaluate(JS_CLICK_GO)
-        self.root.after(0, lambda r=go_result: self._log(f"No-status Go: {r}", "info"))
-        self._sleep(1)
-        check = "NO_DATA"
-        for _ in range(60):
-            self._sleep(0.5)
-            check = page.evaluate(JS_CHECK_NO_DATA)
-            if check in ("HAS_DATA", "NO_RECORDS"):
-                break
-        if check == "HAS_DATA":
-            self.root.after(0, lambda: self._log("No-status filter — data found", "success"))
-            return True
-        return False
-
     # ── Navigate back to Excise Tax main page ─────────────────────────────────
 
     def _navigate_back(self, page):
@@ -1635,8 +1613,7 @@ class ExciseScraperApp:
             except Exception as e:
                 # Fallback: watch Downloads folder
                 self.root.after(0, lambda err=str(e): self._log(f"Download intercept failed: {err} — watching folder", "warning"))
-                browser_dl_dir = os.path.expanduser("~/Downloads")
-                before_files = set(_list_downloads(browser_dl_dir))
+                before_files = set(_list_downloads(download_dir))
                 for attempt in range(6):
                     jr = page.evaluate(JS_CLICK_EXPORT)
                     if jr not in ("TEXT_NOT_FOUND", "BUTTON_NOT_FOUND"):
@@ -1646,7 +1623,7 @@ class ExciseScraperApp:
                 if export_ok:
                     for _ in range(40):
                         self._sleep(0.5)
-                        after_files = set(_list_downloads(browser_dl_dir))
+                        after_files = set(_list_downloads(download_dir))
                         new_files = {f for f in (after_files - before_files)
                                      if not f.endswith(".crdownload") and not f.endswith(".tmp")}
                         if new_files:
