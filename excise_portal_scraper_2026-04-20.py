@@ -140,12 +140,17 @@ def js_click_panel(panel_id):
 
 JS_WAIT_FOR_TABLE = """
 () => {
-    var tables = document.querySelectorAll('table');
+    var b = document.querySelector('.sapUiLocalBusyIndicatorAnimation');
+    if (b && b.getBoundingClientRect().width > 0) return 'not found';
+    var tables = document.querySelectorAll("table[id*='_Table-listUl'], table[id*='_List_table-listUl'], table[id*='-listUl']");
     for (var t = 0; t < tables.length; t++) {
-        var rect = tables[t].getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
-            return 'found';
-        }
+        var r = tables[t].getBoundingClientRect();
+        if (r.width > 0 && r.height > 0 && tables[t].id) return 'found';
+    }
+    var allTables = document.querySelectorAll('table');
+    for (var t = 0; t < allTables.length; t++) {
+        var r = allTables[t].getBoundingClientRect();
+        if (r.width > 0 && r.height > 0 && allTables[t].querySelector('th.sapMListTblHeaderCell')) return 'found';
     }
     return 'not found';
 }
@@ -172,29 +177,46 @@ JS_NAVIGATE_BACK = """
 def js_search(search_term):
     return f"""
     () => {{
-        var all = document.querySelectorAll('input[type="search"][placeholder="Search"]');
+        // Derive active view prefix from the known table ID so we never
+        // accidentally target a hidden panel's search field.
+        var tableId = String(window.__PAD_TABLE_ID || '');
+        var viewPrefix = '';
+        if (tableId) {{
+            var dash = tableId.indexOf('--');
+            if (dash > -1) viewPrefix = tableId.substring(0, dash + 2); // e.g. "__xmlview19--"
+        }}
+        var all = document.querySelectorAll('input[type="search"]');
         var el = null;
-        // Pass 1: preferred pattern (_searchField-I)
+        // Pass 1: same-view _searchField-I
         for (var i = 0; i < all.length; i++) {{
-            if (all[i].id.indexOf('_searchField-I') > -1 && all[i].getBoundingClientRect().width > 0) {{
+            var id = all[i].id;
+            if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
+            if (id.indexOf('_searchField-I') > -1 && all[i].getBoundingClientRect().width > 0) {{
                 el = all[i]; break;
             }}
         }}
-        // Pass 2: any other Search-I pattern excluding searchbar
+        // Pass 2: same-view Search-I (excludes searchbar)
         if (!el) {{
             for (var i = 0; i < all.length; i++) {{
                 var id = all[i].id;
+                if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
                 if (id.indexOf('Search-I') > -1 && id.indexOf('searchbar') === -1 && all[i].getBoundingClientRect().width > 0) {{
                     el = all[i]; break;
                 }}
             }}
         }}
-        // Pass 3: fallback — any visible search input (covers panels with searchbar-style IDs)
+        // Pass 3: any visible input in same view (covers searchbar-style IDs)
         if (!el) {{
             for (var i = 0; i < all.length; i++) {{
-                if (all[i].getBoundingClientRect().width > 0) {{
-                    el = all[i]; break;
-                }}
+                var id = all[i].id;
+                if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
+                if (all[i].getBoundingClientRect().width > 0) {{ el = all[i]; break; }}
+            }}
+        }}
+        // Pass 4: last resort — any visible search input (no view restriction)
+        if (!el) {{
+            for (var i = 0; i < all.length; i++) {{
+                if (all[i].getBoundingClientRect().width > 0) {{ el = all[i]; break; }}
             }}
         }}
         if (!el) return 'FAIL';
@@ -211,21 +233,20 @@ def js_search(search_term):
 def js_verify_search(search_term):
     return f"""
     () => {{
-        var all = document.querySelectorAll('input[type="search"][placeholder="Search"]');
+        var tableId = String(window.__PAD_TABLE_ID || '');
+        var viewPrefix = '';
+        if (tableId) {{
+            var dash = tableId.indexOf('--');
+            if (dash > -1) viewPrefix = tableId.substring(0, dash + 2);
+        }}
+        var all = document.querySelectorAll('input[type="search"]');
         for (var i = 0; i < all.length; i++) {{
-            if (all[i].id.indexOf('_searchField-I') > -1 && all[i].getBoundingClientRect().width > 0) {{
-                return all[i].value;
-            }}
+            var id = all[i].id;
+            if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
+            if (all[i].getBoundingClientRect().width > 0) return all[i].value;
         }}
         for (var i = 0; i < all.length; i++) {{
-            if (all[i].id.indexOf('Search-I') > -1 && all[i].id.indexOf('searchbar') === -1 && all[i].getBoundingClientRect().width > 0) {{
-                return all[i].value;
-            }}
-        }}
-        for (var i = 0; i < all.length; i++) {{
-            if (all[i].getBoundingClientRect().width > 0) {{
-                return all[i].value;
-            }}
+            if (all[i].getBoundingClientRect().width > 0) return all[i].value;
         }}
         return 'EMPTY';
     }}
@@ -233,10 +254,14 @@ def js_verify_search(search_term):
 
 JS_SET_STATUS_APPROVED = """
 () => {
+    var tableId = String(window.__PAD_TABLE_ID || '');
+    var viewPrefix = '';
+    if (tableId) { var d = tableId.indexOf('--'); if (d > -1) viewPrefix = tableId.substring(0, d + 2); }
     var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
     var arrow = null;
     for (var i = 0; i < arrows.length; i++) {
         var id = arrows[i].id;
+        if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
         if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) && arrows[i].getBoundingClientRect().width > 0) {
             arrow = arrows[i];
             break;
@@ -266,10 +291,14 @@ JS_SET_STATUS_APPROVED = """
 
 JS_SET_STATUS_WAREHOUSE = """
 () => {
+    var tableId = String(window.__PAD_TABLE_ID || '');
+    var viewPrefix = '';
+    if (tableId) { var d = tableId.indexOf('--'); if (d > -1) viewPrefix = tableId.substring(0, d + 2); }
     var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
     var arrow = null;
     for (var i = 0; i < arrows.length; i++) {
         var id = arrows[i].id;
+        if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
         if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) && arrows[i].getBoundingClientRect().width > 0) {
             arrow = arrows[i];
             break;
@@ -300,9 +329,13 @@ JS_SET_STATUS_WAREHOUSE = """
 
 JS_SET_PAGE_1000 = """
 () => {
+    var tableId = String(window.__PAD_TABLE_ID || '');
+    var viewPrefix = '';
+    if (tableId) { var d = tableId.indexOf('--'); if (d > -1) viewPrefix = tableId.substring(0, d + 2); }
     var arrows = document.querySelectorAll('span[id*="perpage-arrow"][role="button"]');
     var arrow = null;
     for (var i = 0; i < arrows.length; i++) {
+        if (viewPrefix && arrows[i].id.indexOf(viewPrefix) === -1) continue;
         if (arrows[i].getBoundingClientRect().width > 0) {
             arrow = arrows[i];
             break;
@@ -329,17 +362,34 @@ JS_SET_PAGE_1000 = """
 
 JS_CLICK_GO = """
 () => {
+    var tableId = String(window.__PAD_TABLE_ID || '');
+    var viewPrefix = '';
+    if (tableId) { var d = tableId.indexOf('--'); if (d > -1) viewPrefix = tableId.substring(0, d + 2); }
+    // Pass 1: visible Go button in same view
     var buttons = document.querySelectorAll('button');
     for (var i = 0; i < buttons.length; i++) {
+        if (viewPrefix && buttons[i].id.indexOf(viewPrefix) === -1) continue;
         var bdi = buttons[i].querySelector('bdi');
         if (bdi && bdi.textContent.trim() === 'Go' && buttons[i].getBoundingClientRect().width > 0) {
             var sapBtn = sap.ui.getCore().byId(buttons[i].id);
-            if (sapBtn && sapBtn.firePress) {
-                sapBtn.firePress();
-                return 'SUCCESS';
-            }
-            buttons[i].click();
-            return 'CLICKED';
+            if (sapBtn && sapBtn.firePress) { sapBtn.firePress(); return 'SUCCESS'; }
+            buttons[i].click(); return 'CLICKED';
+        }
+    }
+    // Pass 2: Go button in toolbar overflow (hidden) — fire via SAP API using known ID pattern
+    if (tableId) {
+        var sapTableId = tableId.replace('-listUl', '');
+        var goId = sapTableId + '_Go';
+        var goBtn = sap.ui.getCore().byId(goId);
+        if (goBtn && goBtn.firePress) { goBtn.firePress(); return 'SUCCESS_OVERFLOW'; }
+    }
+    // Pass 3: any Go button in same view, visible or not
+    for (var i = 0; i < buttons.length; i++) {
+        if (viewPrefix && buttons[i].id.indexOf(viewPrefix) === -1) continue;
+        var bdi = buttons[i].querySelector('bdi');
+        if (bdi && bdi.textContent.trim() === 'Go') {
+            var sapBtn = sap.ui.getCore().byId(buttons[i].id);
+            if (sapBtn && sapBtn.firePress) { sapBtn.firePress(); return 'SUCCESS_HIDDEN'; }
         }
     }
     return 'FAIL';
@@ -348,6 +398,8 @@ JS_CLICK_GO = """
 
 JS_CHECK_NO_DATA = """
 () => {
+    var busy = document.querySelector('.sapUiLocalBusyIndicatorAnimation');
+    if (busy && busy.getBoundingClientRect().width > 0) return 'NO_DATA';
     var noData = document.querySelectorAll("td[id*='nodata-text']");
     for (var i = 0; i < noData.length; i++) {
         var rect = noData[i].getBoundingClientRect();
@@ -1257,15 +1309,16 @@ class ExciseScraperApp:
 
                     panel_open = True
 
-                # ── 3 & 4. Filter then download: Approved first, warehouse as fallback ──
+                # ── 3 & 4. Filter then download: Approved → Warehouse → All ──
                 filter_ok = self._apply_filters(page, search_term)
 
                 if filter_ok == "NO_COMBO":
-                    self.root.after(0, lambda: self._log("No status filter on this panel — skipping", "warning"))
-                    continue
+                    # Panel has no recognizable status combo — search + Go with no status filter
+                    self.root.after(0, lambda: self._log("No status combo — using search+Go only", "info"))
+                    filter_ok = self._try_no_status_filter(page, search_term)
 
-                if not filter_ok:
-                    # Approved gave no data — try warehouse keeper as fallback
+                if filter_ok == "TRY_WAREHOUSE":
+                    # No Approved option — try warehouse keeper status
                     filter_ok = self._try_warehouse_filter(page, search_term)
 
                 if not filter_ok:
@@ -1369,8 +1422,8 @@ class ExciseScraperApp:
             return "NO_COMBO"
 
         if status_result == "NO_APPROVED":
-            self.root.after(0, lambda: self._log("No Approved option — trying warehouse", "info"))
-            return False
+            self.root.after(0, lambda: self._log("No Approved option — trying warehouse then All", "info"))
+            return "TRY_WAREHOUSE"
 
         # ── Page size → 1000 (retry up to 3x, 1s between) ──
         for attempt in range(4):
@@ -1384,6 +1437,7 @@ class ExciseScraperApp:
         # ── Click Go ──
         go_result = page.evaluate(JS_CLICK_GO)
         self.root.after(0, lambda r=go_result: self._log(f"Go button: {r}", "info"))
+        self._sleep(1)  # let SAP show busy indicator before first poll
 
         # ── Poll every 0.5s up to 30s ──
         check = "NO_DATA"
@@ -1421,6 +1475,7 @@ class ExciseScraperApp:
         self._sleep(1)
         go_result = page.evaluate(JS_CLICK_GO)
         self.root.after(0, lambda r=go_result: self._log(f"Warehouse Go: {r}", "info"))
+        self._sleep(1)
 
         check = "NO_DATA"
         for _ in range(60):
@@ -1434,6 +1489,28 @@ class ExciseScraperApp:
             self.root.after(0, lambda: self._log("Warehouse filter — data found", "success"))
             return True
         self.root.after(0, lambda: self._log("No data found after all filter attempts", "warning"))
+        return False
+
+    def _try_no_status_filter(self, page, search_term):
+        """Panel has no status combo — just search + page size + Go."""
+        search_term = search_term.lower()
+        self.root.after(0, lambda: self._log("No status combo — search+Go only", "info"))
+        page.evaluate(js_search(search_term))
+        self._sleep(1)
+        page.evaluate(JS_SET_PAGE_1000)
+        self._sleep(1)
+        go_result = page.evaluate(JS_CLICK_GO)
+        self.root.after(0, lambda r=go_result: self._log(f"No-status Go: {r}", "info"))
+        self._sleep(1)
+        check = "NO_DATA"
+        for _ in range(60):
+            self._sleep(0.5)
+            check = page.evaluate(JS_CHECK_NO_DATA)
+            if check in ("HAS_DATA", "NO_RECORDS"):
+                break
+        if check == "HAS_DATA":
+            self.root.after(0, lambda: self._log("No-status filter — data found", "success"))
+            return True
         return False
 
     # ── Navigate back to Excise Tax main page ─────────────────────────────────
@@ -1558,7 +1635,8 @@ class ExciseScraperApp:
             except Exception as e:
                 # Fallback: watch Downloads folder
                 self.root.after(0, lambda err=str(e): self._log(f"Download intercept failed: {err} — watching folder", "warning"))
-                before_files = set(_list_downloads(download_dir))
+                browser_dl_dir = os.path.expanduser("~/Downloads")
+                before_files = set(_list_downloads(browser_dl_dir))
                 for attempt in range(6):
                     jr = page.evaluate(JS_CLICK_EXPORT)
                     if jr not in ("TEXT_NOT_FOUND", "BUTTON_NOT_FOUND"):
@@ -1568,7 +1646,7 @@ class ExciseScraperApp:
                 if export_ok:
                     for _ in range(40):
                         self._sleep(0.5)
-                        after_files = set(_list_downloads(download_dir))
+                        after_files = set(_list_downloads(browser_dl_dir))
                         new_files = {f for f in (after_files - before_files)
                                      if not f.endswith(".crdownload") and not f.endswith(".tmp")}
                         if new_files:

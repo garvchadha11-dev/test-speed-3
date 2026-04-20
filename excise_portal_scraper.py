@@ -1354,7 +1354,7 @@ class ExciseScraperApp:
         self.root.after(0, lambda: self._log("Busy indicator still present after timeout — continuing anyway", "warning"))
 
     def _wait_for_filter_controls(self, page):
-        """Poll up to 15s until SAP is not busy AND both filter controls are visible."""
+        """Poll up to 15s until SAP is not busy AND both filter controls are visible AND status combo has items bound."""
         self._wait_not_busy(page)
         for _ in range(30):
             ready = page.evaluate("""
@@ -1374,7 +1374,11 @@ class ExciseScraperApp:
                     if ((id.indexOf('Status_combobox') > -1 || id.indexOf('myDecStatus_combobox') > -1 ||
                          id.indexOf('DecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) &&
                          arrows[j].getBoundingClientRect().width > 0) {
-                        return 'ready';
+                        var comboId = id.replace('-arrow', '');
+                        var combo = sap.ui.getCore().byId(comboId);
+                        if (combo && typeof combo.getItems === 'function' && combo.getItems().length > 0) {
+                            return 'ready';
+                        }
                     }
                 }
                 return 'not ready';
@@ -1406,16 +1410,25 @@ class ExciseScraperApp:
             self.root.after(0, lambda: self._log("Search did not verify — continuing anyway", "warning"))
 
         # ── Status → Approved (retry up to 3x like PAD) ──
+        # NO_APPROVED is also retried because items may still be loading into the combo.
         status_result = "FAIL"
         for attempt in range(4):
             status_result = page.evaluate(JS_SET_STATUS_APPROVED)
             self.root.after(0, lambda r=status_result, a=attempt: self._log(f"Status attempt {a}: {r}", "info"))
             if status_result == "APPROVED_SET":
                 break
+            if status_result == "NO_APPROVED":
+                # combo might not have finished binding items — wait and retry
+                self._wait_not_busy(page)
+                self._sleep(1.0)
+                continue
             if status_result in ("ARROW_NOT_FOUND", "COMBO_NOT_FOUND"):
                 self._sleep(0.5)
-            else:
-                break  # NO_APPROVED → go to warehouse path
+                continue
+            break
+        # let SAP commit the status change before touching other filters
+        if status_result == "APPROVED_SET":
+            self._wait_not_busy(page)
 
         # No status combo on this panel at all — signal caller to skip both passes
         if status_result in ("ARROW_NOT_FOUND", "COMBO_NOT_FOUND"):
@@ -1434,7 +1447,8 @@ class ExciseScraperApp:
             if pv == "1000":
                 break
             self._sleep(0.5)
-        self._sleep(0.5)
+        # let SAP commit the page-size change before clicking Go
+        self._wait_not_busy(page)
 
         # ── Click Go ──
         go_result = page.evaluate(JS_CLICK_GO)
@@ -1460,16 +1474,25 @@ class ExciseScraperApp:
         # Wait for filter controls to be ready before touching them
         self._wait_for_filter_controls(page)
 
-        wh = page.evaluate(JS_SET_STATUS_WAREHOUSE)
-        self.root.after(0, lambda r=wh: self._log(f"Warehouse status: {r}", "info"))
-        if wh == "FAIL":
+        # Retry warehouse status — items may still be loading into the combo
+        wh = "FAIL"
+        for attempt in range(4):
+            wh = page.evaluate(JS_SET_STATUS_WAREHOUSE)
+            self.root.after(0, lambda r=wh, a=attempt: self._log(f"Warehouse status attempt {a}: {r}", "info"))
+            if wh == "WAREHOUSE_SET":
+                break
+            self._wait_not_busy(page)
+            self._sleep(1.0)
+        if wh != "WAREHOUSE_SET":
             self.root.after(0, lambda: self._log("Warehouse status not available — no data", "warning"))
             return False
-        self._sleep(0.5)
+        # let SAP commit the status change before touching other filters
+        self._wait_not_busy(page)
         page.evaluate(js_search(search_term))
         self._sleep(0.5)
         page.evaluate(JS_SET_PAGE_1000)
-        self._sleep(0.5)
+        # let SAP commit the page-size change before clicking Go
+        self._wait_not_busy(page)
         go_result = page.evaluate(JS_CLICK_GO)
         self.root.after(0, lambda r=go_result: self._log(f"Warehouse Go: {r}", "info"))
 
