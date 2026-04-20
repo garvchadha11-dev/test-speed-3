@@ -1448,21 +1448,7 @@ class ExciseScraperApp:
         search_term = search_term.lower()
         self._sleep(3)
 
-        # ── Search (retry up to 3x, 1s between) ──
-        search_ok = False
-        for attempt in range(4):
-            sv = page.evaluate(js_search(search_term))
-            self._sleep(1)
-            verify = page.evaluate(js_verify_search(search_term))
-            self.root.after(0, lambda v=verify, a=attempt: self._log(f"Search attempt {a}: got '{v}'", "info"))
-            if verify == search_term:
-                search_ok = True
-                break
-            self._sleep(1)
-        if not search_ok:
-            self.root.after(0, lambda: self._log("Search did not verify — continuing anyway", "warning"))
-
-        # ── Status → Approved (retry up to 3x, 1s between) ──
+        # ── Status → Approved FIRST (so portal's onSearch handler has a valid selection) ──
         status_result = "FAIL"
         for attempt in range(4):
             status_result = page.evaluate(JS_SET_STATUS_APPROVED)
@@ -1481,6 +1467,20 @@ class ExciseScraperApp:
         if status_result == "NO_APPROVED":
             self.root.after(0, lambda: self._log("No Approved option — trying warehouse then All", "info"))
             return "TRY_WAREHOUSE"
+
+        # ── Search (retry up to 3x, 1s between) ──
+        search_ok = False
+        for attempt in range(4):
+            sv = page.evaluate(js_search(search_term))
+            self._sleep(1)
+            verify = page.evaluate(js_verify_search(search_term))
+            self.root.after(0, lambda v=verify, a=attempt: self._log(f"Search attempt {a}: got '{v}'", "info"))
+            if verify == search_term:
+                search_ok = True
+                break
+            self._sleep(1)
+        if not search_ok:
+            self.root.after(0, lambda: self._log("Search did not verify — continuing anyway", "warning"))
 
         # ── Page size → 1000 (retry up to 3x, 1s between) ──
         for attempt in range(4):
