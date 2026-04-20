@@ -1336,23 +1336,23 @@ class ExciseScraperApp:
 
     def _apply_filters(self, page, search_term):
         search_term = search_term.lower()
-        self._sleep(6)
+        self._sleep(3)
 
-        # ── Search (retry up to 3x, 2s between — match PAD) ──
+        # ── Search (retry up to 3x, 1s between) ──
         search_ok = False
         for attempt in range(4):
             sv = page.evaluate(js_search(search_term))
-            self._sleep(2)
+            self._sleep(1)
             verify = page.evaluate(js_verify_search(search_term))
             self.root.after(0, lambda v=verify, a=attempt: self._log(f"Search attempt {a}: got '{v}'", "info"))
             if verify == search_term:
                 search_ok = True
                 break
-            self._sleep(2)
+            self._sleep(1)
         if not search_ok:
             self.root.after(0, lambda: self._log("Search did not verify — continuing anyway", "warning"))
 
-        # ── Status → Approved (retry up to 3x, 2s between — match PAD) ──
+        # ── Status → Approved (retry up to 3x, 1s between) ──
         status_result = "FAIL"
         for attempt in range(4):
             status_result = page.evaluate(JS_SET_STATUS_APPROVED)
@@ -1360,7 +1360,7 @@ class ExciseScraperApp:
             if status_result == "APPROVED_SET":
                 break
             if status_result in ("ARROW_NOT_FOUND", "COMBO_NOT_FOUND"):
-                self._sleep(2)
+                self._sleep(1)
             else:
                 break
 
@@ -1372,14 +1372,14 @@ class ExciseScraperApp:
             self.root.after(0, lambda: self._log("No Approved option — trying warehouse", "info"))
             return False
 
-        # ── Page size → 1000 (retry up to 3x, 3s post-wait — match PAD) ──
+        # ── Page size → 1000 (retry up to 3x, 1s between) ──
         for attempt in range(4):
             pv = page.evaluate(JS_SET_PAGE_1000)
             self.root.after(0, lambda v=pv, a=attempt: self._log(f"Page size attempt {a}: {v}", "info"))
             if pv == "1000":
                 break
-            self._sleep(2)
-        self._sleep(3)
+            self._sleep(1)
+        self._sleep(1)
 
         # ── Click Go ──
         go_result = page.evaluate(JS_CLICK_GO)
@@ -1410,15 +1410,15 @@ class ExciseScraperApp:
             self.root.after(0, lambda r=wh, a=attempt: self._log(f"Warehouse status attempt {a}: {r}", "info"))
             if wh == "WAREHOUSE_SET":
                 break
-            self._sleep(2)
+            self._sleep(1)
         if wh != "WAREHOUSE_SET":
             self.root.after(0, lambda: self._log("Warehouse status not available — no data", "warning"))
             return False
-        self._sleep(2)
+        self._sleep(1)
         page.evaluate(js_search(search_term))
-        self._sleep(2)
+        self._sleep(1)
         page.evaluate(JS_SET_PAGE_1000)
-        self._sleep(3)
+        self._sleep(1)
         go_result = page.evaluate(JS_CLICK_GO)
         self.root.after(0, lambda r=go_result: self._log(f"Warehouse Go: {r}", "info"))
 
