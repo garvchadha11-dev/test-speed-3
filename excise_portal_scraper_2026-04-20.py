@@ -225,7 +225,6 @@ def js_search(search_term):
         if (!ctrl) return 'FAIL';
         ctrl.setValue('{search_term}');
         ctrl.fireLiveChange({{newValue: '{search_term}'}});
-        ctrl.fireSearch({{query: '{search_term}'}});
         return ctrl.getValue();
     }}
     """
@@ -1448,7 +1447,21 @@ class ExciseScraperApp:
         search_term = search_term.lower()
         self._sleep(3)
 
-        # ── Status → Approved FIRST (so portal's onSearch handler has a valid selection) ──
+        # ── Search (retry up to 3x, 1s between) ──
+        search_ok = False
+        for attempt in range(4):
+            sv = page.evaluate(js_search(search_term))
+            self._sleep(1)
+            verify = page.evaluate(js_verify_search(search_term))
+            self.root.after(0, lambda v=verify, a=attempt: self._log(f"Search attempt {a}: got '{v}'", "info"))
+            if verify == search_term:
+                search_ok = True
+                break
+            self._sleep(1)
+        if not search_ok:
+            self.root.after(0, lambda: self._log("Search did not verify — continuing anyway", "warning"))
+
+        # ── Status → Approved ──
         status_result = "FAIL"
         for attempt in range(4):
             status_result = page.evaluate(JS_SET_STATUS_APPROVED)
@@ -1465,22 +1478,8 @@ class ExciseScraperApp:
             return "NO_COMBO"
 
         if status_result == "NO_APPROVED":
-            self.root.after(0, lambda: self._log("No Approved option — trying warehouse then All", "info"))
+            self.root.after(0, lambda: self._log("No Approved option — trying warehouse", "info"))
             return "TRY_WAREHOUSE"
-
-        # ── Search (retry up to 3x, 1s between) ──
-        search_ok = False
-        for attempt in range(4):
-            sv = page.evaluate(js_search(search_term))
-            self._sleep(1)
-            verify = page.evaluate(js_verify_search(search_term))
-            self.root.after(0, lambda v=verify, a=attempt: self._log(f"Search attempt {a}: got '{v}'", "info"))
-            if verify == search_term:
-                search_ok = True
-                break
-            self._sleep(1)
-        if not search_ok:
-            self.root.after(0, lambda: self._log("Search did not verify — continuing anyway", "warning"))
 
         # ── Page size → 1000 (retry up to 3x, 1s between) ──
         for attempt in range(4):
