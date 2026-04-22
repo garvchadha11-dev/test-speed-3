@@ -457,18 +457,52 @@ JS_CHECK_NO_DATA = """
     var busy = document.querySelector('.sapUiLocalBusyIndicatorAnimation');
     if (busy && busy.getBoundingClientRect().width > 0) return 'NO_DATA';
 
-    // 2. Explicit "No records found" cell
-    var noData = document.querySelectorAll("td[id*='nodata-text']");
-    for (var i = 0; i < noData.length; i++) {
-        var rect = noData[i].getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
-            if (noData[i].textContent.indexOf("No records found") > -1) return "NO_RECORDS";
-            return "NO_DATA";
+    function _visible(el) {
+        if (!el) return false;
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    }
+
+    // Scope search to the active view so we don't pick up a hidden panel's
+    // "No records found" text that's still in the DOM.
+    var tableId = String(window.__PAD_TABLE_ID || '');
+    var viewPrefix = '';
+    if (tableId) { var d = tableId.indexOf('--'); if (d > -1) viewPrefix = tableId.substring(0, d + 2); }
+
+    function _inView(el) {
+        if (!viewPrefix) return true;
+        // Climb ancestors looking for a view-prefixed id
+        for (var n = el; n && n !== document.body; n = n.parentElement) {
+            if (n.id && n.id.indexOf(viewPrefix) === 0) return true;
+        }
+        return false;
+    }
+
+    // 2. Explicit "No records found" — broadened from td[nodata-text] to
+    //    any SAP no-data container so we catch sap.m.List and overlay-style
+    //    panels too. STRICT text match only — no loose regex.
+    var noDataSelectors = [
+        "td[id*='nodata-text']",
+        "td.sapMListTblNoData",
+        "li.sapMListNoData",
+        ".sapMListNoData",
+        ".sapMTableNoDataOverlay",
+        "[id$='-nodata']",
+        "[id$='-noDataText']"
+    ];
+    for (var s = 0; s < noDataSelectors.length; s++) {
+        var nodes = document.querySelectorAll(noDataSelectors[s]);
+        for (var i = 0; i < nodes.length; i++) {
+            if (!_visible(nodes[i])) continue;
+            if (!_inView(nodes[i])) continue;
+            var txt = (nodes[i].textContent || '').trim();
+            if (/no\\s+records?\\s+found/i.test(txt)) return 'NO_RECORDS';
         }
     }
 
-    // 3. Confirm rows are actually in the SAP binding — not just "busy gone"
-    var tableId = String(window.__PAD_TABLE_ID || '');
+    // 3. SAP binding — authoritative once the OData response has landed.
+    //    Busy is already gone (step 1), so if the binding says length is
+    //    finalized at 0 the portal has confirmed zero rows for this query.
     if (tableId) {
         var sapTableId = tableId.replace('-listUl', '');
         var sapTable = sap.ui.getCore().byId(sapTableId);
@@ -477,16 +511,17 @@ JS_CHECK_NO_DATA = """
             if (binding && typeof binding.getLength === 'function') {
                 var len = binding.getLength();
                 if (len > 0) return 'HAS_DATA';
-                return 'NO_DATA';
+                var finalLen = (typeof binding.isLengthFinal === 'function') ? binding.isLengthFinal() : true;
+                if (finalLen) return 'NO_RECORDS';  // confirmed empty, not "still loading"
+                return 'NO_DATA';                    // length not yet final → keep polling
             }
         }
     }
 
-    // 4. Fallback — check for visible data rows in DOM
+    // 4. Fallback — visible data rows in DOM
     var rows = document.querySelectorAll('tr.sapMLIBActive, tr.sapMListTblRow');
     for (var r = 0; r < rows.length; r++) {
-        var rr = rows[r].getBoundingClientRect();
-        if (rr.width > 0 && rr.height > 0) return 'HAS_DATA';
+        if (_visible(rows[r])) return 'HAS_DATA';
     }
     return 'NO_DATA';
 }
