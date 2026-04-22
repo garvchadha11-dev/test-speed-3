@@ -140,17 +140,34 @@ def js_click_panel(panel_id):
 
 JS_WAIT_FOR_TABLE = """
 () => {
+    // Still loading
     var b = document.querySelector('.sapUiLocalBusyIndicatorAnimation');
     if (b && b.getBoundingClientRect().width > 0) return 'not found';
+
+    // Table must be visible
+    var tableFound = false;
     var tables = document.querySelectorAll("table[id*='_Table-listUl'], table[id*='_List_table-listUl'], table[id*='-listUl']");
     for (var t = 0; t < tables.length; t++) {
         var r = tables[t].getBoundingClientRect();
-        if (r.width > 0 && r.height > 0 && tables[t].id) return 'found';
+        if (r.width > 0 && r.height > 0 && tables[t].id) { tableFound = true; break; }
     }
-    var allTables = document.querySelectorAll('table');
-    for (var t = 0; t < allTables.length; t++) {
-        var r = allTables[t].getBoundingClientRect();
-        if (r.width > 0 && r.height > 0 && allTables[t].querySelector('th.sapMListTblHeaderCell')) return 'found';
+    if (!tableFound) {
+        var allTables = document.querySelectorAll('table');
+        for (var t = 0; t < allTables.length; t++) {
+            var r = allTables[t].getBoundingClientRect();
+            if (r.width > 0 && r.height > 0 && allTables[t].querySelector('th.sapMListTblHeaderCell')) { tableFound = true; break; }
+        }
+    }
+    if (!tableFound) return 'not found';
+
+    // Filter bar must also be ready — search input OR status combo visible
+    var inputs = document.querySelectorAll('input[type="search"]');
+    for (var i = 0; i < inputs.length; i++) {
+        if (inputs[i].getBoundingClientRect().width > 0) return 'found';
+    }
+    var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
+    for (var i = 0; i < arrows.length; i++) {
+        if (arrows[i].getBoundingClientRect().width > 0) return 'found';
     }
     return 'not found';
 }
