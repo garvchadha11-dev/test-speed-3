@@ -1438,12 +1438,7 @@ class ExciseScraperApp:
 
     def _apply_filters(self, page, search_term):
         search_term = search_term.lower()
-        self._sleep(3)
-
-        # ── Search ──
-        sv = page.evaluate(js_search(search_term))
-        self.root.after(0, lambda v=sv: self._log(f"Search set: {v}", "info"))
-        self._sleep(1)
+        self._sleep(2)
 
         # ── Status → Approved ──
         status_result = "FAIL"
@@ -1466,19 +1461,23 @@ class ExciseScraperApp:
             self.root.after(0, lambda: self._log("No Approved option — trying warehouse", "info"))
             return "TRY_WAREHOUSE"
 
-        # ── Page size → 1000 (retry up to 3x, 1s between) ──
+        # ── Search ──
+        sv = page.evaluate(js_search(search_term))
+        self.root.after(0, lambda v=sv: self._log(f"Search set: {v}", "info"))
+        self._sleep(1)
+
+        # ── Page size → 1000 ──
         for attempt in range(4):
             pv = page.evaluate(JS_SET_PAGE_1000)
             self.root.after(0, lambda v=pv, a=attempt: self._log(f"Page size attempt {a}: {v}", "info"))
             if pv == "1000":
                 break
             self._sleep(1)
-        self._sleep(1)
 
         # ── Click Go ──
         go_result = page.evaluate(JS_CLICK_GO)
         self.root.after(0, lambda r=go_result: self._log(f"Go button: {r}", "info"))
-        self._sleep(1)  # let SAP show busy indicator before first poll
+        self._sleep(1)
 
         # ── Poll every 0.5s up to 30s ──
         check = "NO_DATA"
@@ -1492,6 +1491,7 @@ class ExciseScraperApp:
 
         if check == "HAS_DATA":
             self.root.after(0, lambda: self._log("Approved filter — data found", "success"))
+            self._sleep(1)  # let row count settle before download starts
             return True
 
         return False
