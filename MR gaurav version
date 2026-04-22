@@ -715,6 +715,9 @@ class ExciseScraperApp:
                          activeforeground=FG, highlightthickness=0, relief="flat",
                          font=("Helvetica Neue", 10))
             om.pack(side="left", padx=2)
+        tk.Button(self.range_frame, text="Last Month", command=self._set_last_month,
+                  bg=BG_INPUT, fg=ACCENT, relief="flat", padx=8,
+                  font=("Helvetica Neue", 10), cursor="hand2").pack(side="left", padx=(10, 0))
 
         # ── Date range validation error label ──
         self.date_error_label = tk.Label(card, text="", fg="#FF6B6B", bg=BG_CARD,
@@ -902,6 +905,20 @@ class ExciseScraperApp:
             self.progress_var.set(progress)
 
 
+    def _set_last_month(self):
+        import datetime
+        MONTHS = ["January","February","March","April","May","June",
+                  "July","August","September","October","November","December"]
+        today = datetime.date.today()
+        first_of_this_month = today.replace(day=1)
+        last_month = first_of_this_month - datetime.timedelta(days=1)
+        m = MONTHS[last_month.month - 1]
+        y = str(last_month.year)
+        self.range_start_month.set(m)
+        self.range_start_year.set(y)
+        self.range_end_month.set(m)
+        self.range_end_year.set(y)
+
     def _browse_folder(self):
         folder = filedialog.askdirectory(initialdir=self.folder_var.get())
         if folder:
@@ -981,9 +998,9 @@ class ExciseScraperApp:
     # ── Browser ───────────────────────────────────────────────────────────────
 
     def _open_browser(self):
-        self.open_btn.configure(state="disabled", text="Opening...")
-        self._log("Launching browser...", "accent")
-        self.status_var.set("Opening browser — please log in to the FTA portal")
+        self.open_btn.configure(state="disabled", text="Connecting...")
+        self._log("Checking for existing browser session...", "accent")
+        self.status_var.set("Connecting to browser...")
         self._pw_queue.put(self._launch_browser)
 
     def _launch_browser(self):
@@ -992,7 +1009,24 @@ class ExciseScraperApp:
             dl = self.folder_var.get()
             os.makedirs(dl, exist_ok=True)
 
-            # Launch Microsoft Edge with remote debugging
+            # ── Step 1: Try to reuse an already-running Edge on port 9222 ──
+            try:
+                self.pw_browser = self.pw_instance.chromium.connect_over_cdp(
+                    "http://localhost:9222", timeout=2000
+                )
+                contexts = self.pw_browser.contexts
+                if contexts:
+                    pages = contexts[0].pages
+                    self.pw_page = pages[0] if pages else contexts[0].new_page()
+                else:
+                    context = self.pw_browser.new_context(accept_downloads=True)
+                    self.pw_page = context.new_page()
+                self.root.after(0, lambda: self._browser_ready(reconnected=True))
+                return
+            except Exception:
+                pass  # no existing browser — launch a fresh one
+
+            # ── Step 2: Launch Edge with a persistent profile so login is remembered ──
             edge_paths = [
                 r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
                 r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -1004,7 +1038,6 @@ class ExciseScraperApp:
                     break
 
             if edge_bin:
-                # Start Edge with debugging port
                 user_data = os.path.join(os.environ.get("LOCALAPPDATA", ""), "ExciseScraper", "EdgeProfile")
                 self._chrome_proc = subprocess.Popen([
                     edge_bin,
@@ -1014,7 +1047,6 @@ class ExciseScraperApp:
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 time.sleep(3)
 
-                # Connect Playwright to Edge
                 self.pw_browser = self.pw_instance.chromium.connect_over_cdp("http://localhost:9222")
                 contexts = self.pw_browser.contexts
                 if contexts:
@@ -1035,15 +1067,19 @@ class ExciseScraperApp:
                 self.pw_page.goto("https://eservices.tax.gov.ae/#/Logon",
                                   timeout=300000, wait_until="domcontentloaded")
 
-            self.root.after(0, self._browser_ready)
+            self.root.after(0, lambda: self._browser_ready(reconnected=False))
         except Exception as e:
             self.root.after(0, lambda: self._browser_error(str(e)))
 
-    def _browser_ready(self):
+    def _browser_ready(self, reconnected=False):
         self.open_btn.configure(text="Browser Open", bg="#D4EDDA", fg="#2D6A2D")
         self.start_btn.configure(state="normal")
-        self._log("Browser opened — log in, then click Start Scraping", "success")
-        self.status_var.set("Log in to the portal, then click 'Start Scraping'")
+        if reconnected:
+            self._log("Reconnected to existing browser session — ready to scrape", "success")
+            self.status_var.set("Reconnected to existing session — click 'Start Scraping'")
+        else:
+            self._log("Browser opened — log in, then click Start Scraping", "success")
+            self.status_var.set("Log in to the portal, then click 'Start Scraping'")
 
     def _browser_error(self, msg):
         self.open_btn.configure(state="normal", text="1. Open Browser & Login")
