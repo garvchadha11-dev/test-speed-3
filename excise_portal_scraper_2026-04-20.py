@@ -224,7 +224,6 @@ def js_search(search_term):
         var ctrl = sap.ui.getCore().byId(sapId);
         if (!ctrl) return 'FAIL';
         ctrl.setValue('{search_term}');
-        ctrl.fireLiveChange({{newValue: '{search_term}'}});
         return ctrl.getValue();
     }}
     """
@@ -267,8 +266,6 @@ JS_SET_STATUS_APPROVED = """
                 combo.setSelectedKey(items[j].getKey());
                 combo.setSelectedItem(items[j]);
                 combo.setValue('Approved');
-                combo.fireSelectionChange({selectedItem: items[j]});
-                combo.fireChange({value: 'Approved'});
                 return 'APPROVED_SET';
             }
         }
@@ -322,8 +319,6 @@ JS_SET_STATUS_WAREHOUSE = """
                 combo.setSelectedKey(items[j].getKey());
                 combo.setSelectedItem(items[j]);
                 combo.setValue(items[j].getText().trim());
-                combo.fireSelectionChange({selectedItem: items[j]});
-                combo.fireChange({value: items[j].getText().trim()});
                 return 'WAREHOUSE_SET';
             }
         }
@@ -384,8 +379,6 @@ JS_SET_PAGE_1000 = """
             combo.setSelectedKey(items[j].getKey());
             combo.setSelectedItem(items[j]);
             combo.setValue('1000');
-            combo.fireSelectionChange({selectedItem: items[j]});
-            combo.fireChange({value: '1000'});
             return combo.getValue();
         }
     }
