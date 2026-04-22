@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import glob
+import json
 import shutil
 import subprocess
 import threading
@@ -140,36 +141,71 @@ def js_click_panel(panel_id):
 
 JS_WAIT_FOR_TABLE = """
 () => {
-    // Still loading
+    // 1. SAP must not be mid-request
     var b = document.querySelector('.sapUiLocalBusyIndicatorAnimation');
     if (b && b.getBoundingClientRect().width > 0) return 'not found';
 
-    // Table must be visible
-    var tableFound = false;
-    var tables = document.querySelectorAll("table[id*='_Table-listUl'], table[id*='_List_table-listUl'], table[id*='-listUl']");
-    for (var t = 0; t < tables.length; t++) {
-        var r = tables[t].getBoundingClientRect();
-        if (r.width > 0 && r.height > 0 && tables[t].id) { tableFound = true; break; }
+    // 2. Find a visible SAP list table whose binding has finished loading
+    //    for THIS panel. isLengthFinal() is only true once the OData request
+    //    has resolved — so we won't pick up a stale sibling table whose
+    //    binding hasn't yet refreshed for the new route.
+    function _visible(el) {
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
     }
-    if (!tableFound) {
-        var allTables = document.querySelectorAll('table');
-        for (var t = 0; t < allTables.length; t++) {
-            var r = allTables[t].getBoundingClientRect();
-            if (r.width > 0 && r.height > 0 && allTables[t].querySelector('th.sapMListTblHeaderCell')) { tableFound = true; break; }
+    function _bindingReady(domTable) {
+        if (!domTable || !domTable.id) return false;
+        var sapId = domTable.id.replace('-listUl', '');
+        try {
+            var sapTable = sap.ui.getCore().byId(sapId);
+            if (!sapTable) return false;
+            var binding = sapTable.getBinding('items');
+            if (!binding) return false;
+            if (typeof binding.isLengthFinal !== 'function') return false;
+            return binding.isLengthFinal();
+        } catch (e) { return false; }
+    }
+
+    var chosen = null;
+    var candidates = document.querySelectorAll("table[id*='_Table-listUl'], table[id*='_List_table-listUl'], table[id*='-listUl']");
+    for (var t = 0; t < candidates.length; t++) {
+        if (_visible(candidates[t]) && _bindingReady(candidates[t])) {
+            chosen = candidates[t]; break;
         }
     }
-    if (!tableFound) return 'not found';
+    if (!chosen) {
+        var all = document.querySelectorAll('table');
+        for (var t = 0; t < all.length; t++) {
+            if (!_visible(all[t]) || !all[t].id) continue;
+            if (!all[t].querySelector('th.sapMListTblHeaderCell')) continue;
+            if (_bindingReady(all[t])) { chosen = all[t]; break; }
+        }
+    }
+    if (!chosen) return 'not found';
 
-    // Filter bar must also be ready — search input OR status combo visible
+    // 3. Filter bar must be rendered in the SAME view as the chosen table
+    var viewPrefix = '';
+    var dash = chosen.id.indexOf('--');
+    if (dash > -1) viewPrefix = chosen.id.substring(0, dash + 2);
+
+    var hasFilter = false;
     var inputs = document.querySelectorAll('input[type="search"]');
     for (var i = 0; i < inputs.length; i++) {
-        if (inputs[i].getBoundingClientRect().width > 0) return 'found';
+        if (viewPrefix && inputs[i].id.indexOf(viewPrefix) === -1) continue;
+        if (_visible(inputs[i])) { hasFilter = true; break; }
     }
-    var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
-    for (var i = 0; i < arrows.length; i++) {
-        if (arrows[i].getBoundingClientRect().width > 0) return 'found';
+    if (!hasFilter) {
+        var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
+        for (var i = 0; i < arrows.length; i++) {
+            if (viewPrefix && arrows[i].id.indexOf(viewPrefix) === -1) continue;
+            if (_visible(arrows[i])) { hasFilter = true; break; }
+        }
     }
-    return 'not found';
+    if (!hasFilter) return 'not found';
+
+    // 4. Commit: this panel's table is the one filter JS should target.
+    window.__PAD_TABLE_ID = chosen.id;
+    return 'found';
 }
 """
 
@@ -191,59 +227,59 @@ JS_NAVIGATE_BACK = """
 # JAVASCRIPT — ApplyFilters
 # ══════════════════════════════════════════════════════════════════════════════
 
-def js_search(search_term):
-    return f"""
-    () => {{
-        // Derive active view prefix from the known table ID so we never
-        // accidentally target a hidden panel's search field.
-        var tableId = String(window.__PAD_TABLE_ID || '');
-        var viewPrefix = '';
-        if (tableId) {{
-            var dash = tableId.indexOf('--');
-            if (dash > -1) viewPrefix = tableId.substring(0, dash + 2); // e.g. "__xmlview19--"
-        }}
-        var all = document.querySelectorAll('input[type="search"]');
-        var el = null;
-        // Pass 1: same-view _searchField-I
-        for (var i = 0; i < all.length; i++) {{
+JS_FOCUS_SEARCH_INPUT = """
+() => {
+    // Locate the active-view search input, clear it, and return its DOM id
+    // so the caller can type into it via real keyboard events.
+    var tableId = String(window.__PAD_TABLE_ID || '');
+    var viewPrefix = '';
+    if (tableId) {
+        var dash = tableId.indexOf('--');
+        if (dash > -1) viewPrefix = tableId.substring(0, dash + 2);
+    }
+    var all = document.querySelectorAll('input[type="search"]');
+    var el = null;
+    // Pass 1: same-view _searchField-I
+    for (var i = 0; i < all.length; i++) {
+        var id = all[i].id;
+        if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
+        if (id.indexOf('_searchField-I') > -1 && all[i].getBoundingClientRect().width > 0) {
+            el = all[i]; break;
+        }
+    }
+    // Pass 2: same-view Search-I (excludes searchbar)
+    if (!el) {
+        for (var i = 0; i < all.length; i++) {
             var id = all[i].id;
             if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
-            if (id.indexOf('_searchField-I') > -1 && all[i].getBoundingClientRect().width > 0) {{
+            if (id.indexOf('Search-I') > -1 && id.indexOf('searchbar') === -1 && all[i].getBoundingClientRect().width > 0) {
                 el = all[i]; break;
-            }}
-        }}
-        // Pass 2: same-view Search-I (excludes searchbar)
-        if (!el) {{
-            for (var i = 0; i < all.length; i++) {{
-                var id = all[i].id;
-                if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
-                if (id.indexOf('Search-I') > -1 && id.indexOf('searchbar') === -1 && all[i].getBoundingClientRect().width > 0) {{
-                    el = all[i]; break;
-                }}
-            }}
-        }}
-        // Pass 3: any visible input in same view (covers searchbar-style IDs)
-        if (!el) {{
-            for (var i = 0; i < all.length; i++) {{
-                var id = all[i].id;
-                if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
-                if (all[i].getBoundingClientRect().width > 0) {{ el = all[i]; break; }}
-            }}
-        }}
-        // Pass 4: last resort — any visible search input (no view restriction)
-        if (!el) {{
-            for (var i = 0; i < all.length; i++) {{
-                if (all[i].getBoundingClientRect().width > 0) {{ el = all[i]; break; }}
-            }}
-        }}
-        if (!el) return 'FAIL';
-        var sapId = el.id.replace(/-I$/, '');
-        var ctrl = sap.ui.getCore().byId(sapId);
-        if (!ctrl) return 'FAIL';
-        ctrl.setValue('{search_term}');
-        return ctrl.getValue();
-    }}
-    """
+            }
+        }
+    }
+    // Pass 3: any visible input in same view (covers searchbar-style IDs)
+    if (!el) {
+        for (var i = 0; i < all.length; i++) {
+            var id = all[i].id;
+            if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
+            if (all[i].getBoundingClientRect().width > 0) { el = all[i]; break; }
+        }
+    }
+    // Pass 4: last resort — any visible search input (no view restriction)
+    if (!el) {
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].getBoundingClientRect().width > 0) { el = all[i]; break; }
+        }
+    }
+    if (!el) return 'FAIL';
+    // Clear via SAP API so the binding notices, then focus for keyboard typing
+    var sapId = el.id.replace(/-I$/, '');
+    var ctrl = sap.ui.getCore().byId(sapId);
+    if (ctrl) ctrl.setValue('');
+    el.focus();
+    return el.id;
+}
+"""
 
 def js_verify_search(search_term):
     return f"""
@@ -267,30 +303,43 @@ def js_verify_search(search_term):
     }}
     """
 
-JS_SET_STATUS_APPROVED = """
-() => {
+# Locate the status combo so Python can type into its inner input via
+# real keyboard events. Returns JSON:
+#   {status: 'OK', comboId, inputId, targetText} — ready to type
+#   {status: 'NO_MATCH'}  — combo exists but has no item matching target
+#   {status: 'ARROW_NOT_FOUND'} — no status combo in this view
+JS_FIND_STATUS_COMBO = """
+(targetKind) => {
     var tableId = String(window.__PAD_TABLE_ID || '');
     var viewPrefix = '';
     if (tableId) { var d = tableId.indexOf('--'); if (d > -1) viewPrefix = tableId.substring(0, d + 2); }
 
-    function trySetApproved(arrowEl) {
+    function matches(text) {
+        var t = text.trim();
+        if (targetKind === 'APPROVED') return t === 'Approved';
+        if (targetKind === 'WAREHOUSE') {
+            var lo = t.toLowerCase();
+            return lo === 'approved by destination warehouse keeper' || lo === 'approved by warehouse keeper';
+        }
+        return false;
+    }
+
+    function inspect(arrowEl) {
         var comboId = arrowEl.id.replace('-arrow', '');
         var combo = sap.ui.getCore().byId(comboId);
         if (!combo) return null;
         var items = combo.getItems();
+        if (items.length === 0) return null;
         for (var j = 0; j < items.length; j++) {
-            if (items[j].getText().trim() === 'Approved') {
-                combo.setSelectedKey(items[j].getKey());
-                combo.setSelectedItem(items[j]);
-                combo.setValue('Approved');
-                return 'APPROVED_SET';
+            if (matches(items[j].getText())) {
+                return {comboId: comboId, inputId: comboId + '-inner', targetText: items[j].getText().trim()};
             }
         }
-        if (items.length > 0) return 'NO_APPROVED';
-        return null;
+        return {comboId: comboId, inputId: comboId + '-inner', targetText: null}; // items but no match
     }
 
     var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
+    var fallback = null;
 
     // Pass 1: known status keyword patterns
     for (var i = 0; i < arrows.length; i++) {
@@ -299,76 +348,39 @@ JS_SET_STATUS_APPROVED = """
         if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 ||
              id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) &&
             arrows[i].getBoundingClientRect().width > 0) {
-            var r = trySetApproved(arrows[i]);
-            if (r) return r;
+            var r = inspect(arrows[i]);
+            if (r && r.targetText) return JSON.stringify({status: 'OK', comboId: r.comboId, inputId: r.inputId, targetText: r.targetText});
+            if (r && !fallback) fallback = r;
         }
     }
 
-    // Pass 2: any visible combo in same view that has an Approved item
-    for (var i = 0; i < arrows.length; i++) {
-        var id = arrows[i].id;
-        if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
-        if (id.indexOf('perpage') > -1) continue;  // skip page-size combo
-        if (arrows[i].getBoundingClientRect().width > 0) {
-            var r = trySetApproved(arrows[i]);
-            if (r) return r;
-        }
-    }
-
-    return 'ARROW_NOT_FOUND';
-}
-"""
-
-JS_SET_STATUS_WAREHOUSE = """
-() => {
-    var tableId = String(window.__PAD_TABLE_ID || '');
-    var viewPrefix = '';
-    if (tableId) { var d = tableId.indexOf('--'); if (d > -1) viewPrefix = tableId.substring(0, d + 2); }
-
-    function trySetWarehouse(arrowEl) {
-        var comboId = arrowEl.id.replace('-arrow', '');
-        var combo = sap.ui.getCore().byId(comboId);
-        if (!combo) return null;
-        var items = combo.getItems();
-        for (var j = 0; j < items.length; j++) {
-            var txt = items[j].getText().trim().toLowerCase();
-            if (txt === 'approved by destination warehouse keeper' || txt === 'approved by warehouse keeper') {
-                combo.setSelectedKey(items[j].getKey());
-                combo.setSelectedItem(items[j]);
-                combo.setValue(items[j].getText().trim());
-                return 'WAREHOUSE_SET';
-            }
-        }
-        if (items.length > 0) return 'NOT_FOUND';
-        return null;
-    }
-
-    var arrows = document.querySelectorAll('span[id$="_combobox-arrow"]');
-
-    // Pass 1: known status keyword patterns
-    for (var i = 0; i < arrows.length; i++) {
-        var id = arrows[i].id;
-        if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
-        if ((id.indexOf('Status_combobox') > -1 || id.indexOf('DecStatus_combobox') > -1 ||
-             id.indexOf('myDecStatus_combobox') > -1 || id.indexOf('myDeclStatus_combobox') > -1) &&
-            arrows[i].getBoundingClientRect().width > 0) {
-            var r = trySetWarehouse(arrows[i]);
-            if (r) return r;
-        }
-    }
-
-    // Pass 2: any visible combo in same view that has a warehouse item
+    // Pass 2: any visible combo in same view (excluding page-size)
     for (var i = 0; i < arrows.length; i++) {
         var id = arrows[i].id;
         if (viewPrefix && id.indexOf(viewPrefix) === -1) continue;
         if (id.indexOf('perpage') > -1) continue;
         if (arrows[i].getBoundingClientRect().width > 0) {
-            var r = trySetWarehouse(arrows[i]);
-            if (r) return r;
+            var r = inspect(arrows[i]);
+            if (r && r.targetText) return JSON.stringify({status: 'OK', comboId: r.comboId, inputId: r.inputId, targetText: r.targetText});
+            if (r && !fallback) fallback = r;
         }
     }
 
-    return 'FAIL';
+    if (fallback) return JSON.stringify({status: 'NO_MATCH'});
+    return JSON.stringify({status: 'ARROW_NOT_FOUND'});
+}
+"""
+
+# Verify the combo's selected item text, then clear selection safely via API
+# if verification fails (so retry can try again fresh).
+JS_VERIFY_STATUS = """
+(args) => {
+    var c = sap.ui.getCore().byId(args.comboId);
+    if (!c) return 'NO_CONTROL';
+    var it = (typeof c.getSelectedItem === 'function') ? c.getSelectedItem() : null;
+    if (!it) return 'NO_SELECTION';
+    var t = it.getText().trim();
+    return (t === args.targetText) ? 'OK' : ('MISMATCH:' + t);
 }
 """
 
@@ -1352,7 +1364,13 @@ class ExciseScraperApp:
                     f"Processing {l} — {st}"))
 
                 if not panel_open:
-                    # ── 1. Click panel — retry until it registers ──
+                    # ── 1. Clear any stale table ID from a previous panel ──
+                    # Without this, filter JS view-prefix scoping targets the
+                    # WRONG view — especially on shared-view panels (myDecl,
+                    # EX203_ML/A/D/F all reuse __xmlview36--ExciseList_myDecl_Table).
+                    page.evaluate("() => { window.__PAD_TABLE_ID = ''; return 'RESET'; }")
+
+                    # ── 2. Click panel — retry until it registers ──
                     self.root.after(0, lambda: self._log("Clicking panel...", "info"))
                     for attempt in range(5):
                         result = page.evaluate(js_click_panel(panel_id))
@@ -1361,14 +1379,26 @@ class ExciseScraperApp:
                         self._sleep(0.5)
                     self.root.after(0, lambda r=result: self._log(f"Panel: {r}", "info"))
 
-                    # ── 2. Wait for table — poll every 1s, up to 30s ──
+                    # ── 3. Let SAP dispatch the route + fire its OData request ──
+                    # If we poll too early we might catch a brief non-busy
+                    # window before the new request even starts.
+                    self._sleep(1)
+
+                    # ── 4. Wait for THIS panel's table to be fully loaded ──
+                    # JS_WAIT_FOR_TABLE now:
+                    #   - waits for busy indicator to clear
+                    #   - requires the visible table's SAP binding to report
+                    #     isLengthFinal() (new OData response has landed)
+                    #   - requires filter bar to be rendered in the same view
+                    #   - commits the chosen table id into window.__PAD_TABLE_ID
+                    found = "not found"
                     for _ in range(60):
-                        self._sleep(0.3)
+                        self._sleep(0.5)
                         found = page.evaluate(JS_WAIT_FOR_TABLE)
                         if found == "found":
                             break
-                    else:
-                        self.root.after(0, lambda: self._log("Table never appeared — skipping", "warning"))
+                    if found != "found":
+                        self.root.after(0, lambda: self._log("Table never ready — skipping", "warning"))
                         self._navigate_back(page)
                         panel_open = False
                         continue
@@ -1453,34 +1483,72 @@ class ExciseScraperApp:
 
     # ── ApplyFilters ──────────────────────────────────────────────────────────
 
+    def _type_status(self, page, kind):
+        """Find the status combo, type the target text into it, verify.
+        Returns one of: 'OK', 'NO_MATCH', 'NO_COMBO', 'FAIL'."""
+        for attempt in range(4):
+            raw = page.evaluate(JS_FIND_STATUS_COMBO, kind)
+            try:
+                info = json.loads(raw)
+            except Exception:
+                info = {"status": "FAIL"}
+            status = info.get("status")
+            self.root.after(0, lambda a=attempt, s=status: self._log(f"Status find {a}: {s}", "info"))
+
+            if status == "ARROW_NOT_FOUND":
+                self._sleep(1)
+                continue
+            if status == "NO_MATCH":
+                return "NO_MATCH"
+            if status != "OK":
+                self._sleep(1)
+                continue
+
+            input_id = info["inputId"]
+            combo_id = info["comboId"]
+            target = info["targetText"]
+            loc = page.locator(f'[id="{input_id}"]')
+            # Triple-click selects existing input text so typing replaces it
+            loc.click(click_count=3)
+            page.keyboard.type(target, delay=80)
+            page.keyboard.press("Enter")
+            self._sleep(0.5)
+
+            verify = page.evaluate(JS_VERIFY_STATUS, {"comboId": combo_id, "targetText": target})
+            self.root.after(0, lambda v=verify, t=target: self._log(f"Typed '{t}', verify: {v}", "info"))
+            if verify == "OK":
+                return "OK"
+            self._sleep(1)
+        return "NO_COMBO" if status == "ARROW_NOT_FOUND" else "FAIL"
+
     def _apply_filters(self, page, search_term):
         search_term = search_term.lower()
         self._sleep(2)
 
-        # ── Status → Approved ──
-        status_result = "FAIL"
-        for attempt in range(4):
-            status_result = page.evaluate(JS_SET_STATUS_APPROVED)
-            self.root.after(0, lambda r=status_result, a=attempt: self._log(f"Status attempt {a}: {r}", "info"))
-            if status_result == "APPROVED_SET":
-                break
-            if status_result in ("ARROW_NOT_FOUND", "COMBO_NOT_FOUND"):
-                self._sleep(1)
-            else:
-                break
+        # ── Status → type "Approved" ──
+        status_result = self._type_status(page, "APPROVED")
         self._sleep(1)
 
-        if status_result in ("ARROW_NOT_FOUND", "COMBO_NOT_FOUND"):
-            self.root.after(0, lambda r=status_result: self._log(f"Status combo not available ({r}) — skipping", "warning"))
+        if status_result == "NO_COMBO":
+            self.root.after(0, lambda: self._log("Status combo not available — skipping", "warning"))
             return "NO_COMBO"
-
-        if status_result == "NO_APPROVED":
+        if status_result == "NO_MATCH":
             self.root.after(0, lambda: self._log("No Approved option — trying warehouse", "info"))
             return "TRY_WAREHOUSE"
+        if status_result != "OK":
+            self.root.after(0, lambda: self._log("Could not set Approved status — skipping", "warning"))
+            return False
 
-        # ── Search ──
-        sv = page.evaluate(js_search(search_term))
-        self.root.after(0, lambda v=sv: self._log(f"Search set: {v}", "info"))
+        # ── Search (type character-by-character) ──
+        input_id = page.evaluate(JS_FOCUS_SEARCH_INPUT)
+        if input_id and input_id != "FAIL":
+            loc = page.locator(f'[id="{input_id}"]')
+            loc.click()
+            page.keyboard.type(search_term, delay=80)
+            sv = search_term
+        else:
+            sv = "FAIL"
+        self.root.after(0, lambda v=sv: self._log(f"Search typed: {v}", "info"))
         self._sleep(1)
 
         # ── Page size → 1000 ──
@@ -1516,18 +1584,15 @@ class ExciseScraperApp:
     def _try_warehouse_filter(self, page, search_term):
         search_term = search_term.lower()
         self.root.after(0, lambda: self._log("Trying warehouse keeper status...", "info"))
-        wh = "FAIL"
-        for attempt in range(4):
-            wh = page.evaluate(JS_SET_STATUS_WAREHOUSE)
-            self.root.after(0, lambda r=wh, a=attempt: self._log(f"Warehouse status attempt {a}: {r}", "info"))
-            if wh == "WAREHOUSE_SET":
-                break
-            self._sleep(1)
-        if wh != "WAREHOUSE_SET":
+        wh_result = self._type_status(page, "WAREHOUSE")
+        if wh_result != "OK":
             self.root.after(0, lambda: self._log("Warehouse status not available — no data", "warning"))
             return False
         self._sleep(1)
-        page.evaluate(js_search(search_term))
+        wh_input_id = page.evaluate(JS_FOCUS_SEARCH_INPUT)
+        if wh_input_id and wh_input_id != "FAIL":
+            page.locator(f'[id="{wh_input_id}"]').click()
+            page.keyboard.type(search_term, delay=80)
         self._sleep(1)
         page.evaluate(JS_SET_PAGE_1000)
         self._sleep(1)
