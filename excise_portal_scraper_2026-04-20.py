@@ -1447,19 +1447,10 @@ class ExciseScraperApp:
         search_term = search_term.lower()
         self._sleep(3)
 
-        # ── Search (retry up to 3x, 1s between) ──
-        search_ok = False
-        for attempt in range(4):
-            sv = page.evaluate(js_search(search_term))
-            self._sleep(1)
-            verify = page.evaluate(js_verify_search(search_term))
-            self.root.after(0, lambda v=verify, a=attempt: self._log(f"Search attempt {a}: got '{v}'", "info"))
-            if verify == search_term:
-                search_ok = True
-                break
-            self._sleep(1)
-        if not search_ok:
-            self.root.after(0, lambda: self._log("Search did not verify — continuing anyway", "warning"))
+        # ── Search ──
+        sv = page.evaluate(js_search(search_term))
+        self.root.after(0, lambda v=sv: self._log(f"Search set: {v}", "info"))
+        self._sleep(1)
 
         # ── Status → Approved ──
         status_result = "FAIL"
@@ -1472,6 +1463,7 @@ class ExciseScraperApp:
                 self._sleep(1)
             else:
                 break
+        self._sleep(1)
 
         if status_result in ("ARROW_NOT_FOUND", "COMBO_NOT_FOUND"):
             self.root.after(0, lambda r=status_result: self._log(f"Status combo not available ({r}) — skipping", "warning"))
